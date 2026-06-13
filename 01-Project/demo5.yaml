@@ -1,0 +1,71 @@
+# Five persistent, tool-using LLM traders with PRIVATE, heterogeneous, decaying
+# information, in a 3-market world over 50 rounds.
+#
+# Information structure (news.mode = prob): every round, each LLM agent privately
+# receives a noisy estimate of each market's true YES probability,
+#   s = clip(true_prob + N(0, sigma_t)),  sigma_t = signal_sigma * (1 - 0.8 * (t-1)/(T-1))
+# so traders differ in how well-informed they are (signal_sigma) and everyone's
+# signal sharpens as the horizon approaches. Each agent is told its own current
+# reliability (±sigma). Two market makers provide liquidity; one noise trader adds
+# churn. With 5 live LLM agents this is meant to be RUN OFFLINE (CLI) and then
+# replayed in the browser — not stepped live.
+seed: 42
+rounds: 50
+max_actions_per_agent: 12
+allow_self_trade: true
+depth_k: 8
+run_name: demo5
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.65
+    resolve_round: 999
+  - id: COIN-B
+    question: "Will coin B land heads?"
+    true_prob: 0.40
+    resolve_round: 999
+  - id: COIN-C
+    question: "Will coin C land heads?"
+    true_prob: 0.55
+    resolve_round: 999
+
+agents:
+  # five LLM traders, best-informed to worst-informed (smaller sigma = sharper signal)
+  - id: llm1
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.04, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm2
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.06, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm3
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.08, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm4
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.10, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm5
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.12, temperature: 0.7, max_tool_calls: 8 }
+  # liquidity + churn
+  - id: mm
+    type: mm
+    count: 2
+    initial_cash: 500000
+    params: { spread: 3, size: 15 }
+  - id: noise
+    type: noise
+    count: 1
+    initial_cash: 200000
+    params: { q: 0.5, w: 8, max_qty: 10 }
+
+news:
+  enabled: true
+  mode: prob
+  sigma_decay: 0.8
+  disclose_sigma: true

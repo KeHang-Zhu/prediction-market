@@ -1,0 +1,46 @@
+# Agentic demo — a PERSISTENT, tool-using LLM trader (Gemini via Vertex).
+# Unlike demo_llm.yaml (one-shot observation -> action), the `llm_agentic` agent
+# holds ONE conversation across the whole run: each round it gets a short wake-up
+# briefing, then drives a function-calling loop over the read-only agent API
+# (get_markets / get_orderbook / get_news ...) and queues its orders for end-of-round
+# settlement. It accumulates real memory and can build multi-round strategies.
+#
+# Each step is several live model calls, so the web UI runs this SINGLE-STEP only.
+seed: 11
+rounds: 50
+max_actions_per_agent: 8
+allow_self_trade: true
+depth_k: 8
+run_name: demo_agentic
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.62
+    resolve_round: 999
+
+agents:
+  - id: noise
+    type: noise
+    count: 2
+    initial_cash: 200000
+    params: { q: 0.6, w: 8, max_qty: 10 }
+  - id: mm
+    type: mm
+    count: 1
+    initial_cash: 400000
+    params: { spread: 3, size: 15 }
+  - id: gemini             # the persistent tool-using LLM trader
+    type: llm_agentic
+    count: 1
+    initial_cash: 200000
+    params: { temperature: 0.7, max_tool_calls: 8 }
+  - id: me
+    type: human
+    count: 1
+    initial_cash: 100000
+
+news:
+  enabled: true
+  every_rounds: 8
+  epsilon: 0.2

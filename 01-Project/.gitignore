@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+
+# runs / eval artifacts — kept in the repo as a recorded data snapshot
+# (simulation logs, session snapshots, and eval results).
+
+# secrets / local config
+.env
+
+# node / frontend
+node_modules/
+market_sim/web/frontend/node_modules/
+market_sim/web/static/
+
+# OS
+.DS_Store

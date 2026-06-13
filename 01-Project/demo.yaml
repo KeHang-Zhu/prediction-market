@@ -1,0 +1,50 @@
+# Demo experiment — 3 markets, 5 scripted bots (+ 1 human seat for manual orders).
+# Acceptance target (M4): runs clean, replays byte-exact, the fundamentalist's
+# markets converge to true_prob ±5¢, and the market maker's P&L is positive.
+
+seed: 20260607
+rounds: 500          # human demo runs up to 500 rounds, then auto-run stops
+max_actions_per_agent: 16     # bots quote several markets per round; LLM cost knob is separate
+allow_self_trade: true
+depth_k: 10
+run_name: demo
+
+markets:
+  - id: COIN-A
+    question: "Coin A lands heads? (bias unknown)"
+    true_prob: 0.65
+    resolve_round: 999          # stays open through the run -> watch convergence to 65¢
+  - id: COIN-B
+    question: "Coin B lands heads?"
+    true_prob: 0.40
+    resolve_round: 120          # resolves mid-run -> demonstrates resolution + payout
+  - id: COIN-C
+    question: "Coin C lands heads?"
+    true_prob: 0.55
+    resolve_round: 999          # converges to 55¢
+
+agents:
+  - id: noise
+    type: noise
+    count: 3
+    initial_cash: 250000
+    params: { q: 0.6, w: 8, max_qty: 12 }
+  - id: mm
+    type: mm
+    count: 1
+    initial_cash: 600000
+    params: { spread: 3, size: 20, skew_unit: 30 }
+  - id: fund
+    type: fundamentalist
+    count: 1
+    initial_cash: 600000
+    params: { threshold: 4, size: 15 }
+  - id: me
+    type: human
+    count: 1
+    initial_cash: 100000
+
+news:
+  enabled: true
+  every_rounds: 15
+  epsilon: 0.2

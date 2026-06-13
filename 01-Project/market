@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Wrapper for the terminal CLI. Uses the venv python via `-m` so it works even
+# when the project path contains spaces (which breaks the generated console
+# script's shebang). Usage: ./market <command> [args...]
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/.venv/bin/python" -m market_sim.cli.main "$@"

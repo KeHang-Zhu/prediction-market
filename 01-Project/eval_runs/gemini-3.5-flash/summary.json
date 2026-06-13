@@ -1,0 +1,81 @@
+{
+  "n_trials": 40,
+  "n_errored": 0,
+  "n_evaluated": 40,
+  "l1": {
+    "parse_success_rate": 1.0,
+    "response_ok_rate": 1.0,
+    "action_valid_rate": 1.0,
+    "hallucinated_endpoint_rate": 0.0,
+    "avg_actions_per_trial": 1.475
+  },
+  "probes": {
+    "P1": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P2": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P3": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P4": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P5": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P6": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P7": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    },
+    "P8": {
+      "n": 5,
+      "k": 5,
+      "passed": 5,
+      "rate": 1.0,
+      "ci_lo": 0.565508505247919,
+      "ci_hi": 1.0
+    }
+  },
+  "model": "gemini-3.5-flash",
+  "repeats": 5,
+  "temperature": 0.7
+}

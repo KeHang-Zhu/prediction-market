@@ -1,0 +1,63 @@
+# Five persistent, tool-using LLM traders with PRIVATE, heterogeneous, decaying
+# information, in a 3-market world over 50 rounds — and NOTHING ELSE. No market
+# makers, no noise traders: the ONLY liquidity is the five LLMs trading against
+# each other. This isolates pure agent price discovery — convergence (or not) is
+# entirely the LLMs' doing, with no scripted bots providing a quote backbone.
+#
+# Information structure (news.mode = prob): every round, each LLM agent privately
+# receives a noisy estimate of each market's true YES probability,
+#   s = clip(true_prob + N(0, sigma_t)),  sigma_t = signal_sigma * (1 - 0.8 * (t-1)/(T-1))
+# so traders differ in how well-informed they are (signal_sigma) and everyone's
+# signal sharpens as the horizon approaches. Each agent is told its own current
+# reliability (±sigma). With 5 live LLM agents this is meant to be RUN OFFLINE
+# (CLI) and then replayed in the browser — not stepped live.
+seed: 42
+rounds: 50
+max_actions_per_agent: 12
+allow_self_trade: true
+depth_k: 8
+run_name: llm5_only
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.65
+    resolve_round: 999
+  - id: COIN-B
+    question: "Will coin B land heads?"
+    true_prob: 0.40
+    resolve_round: 999
+  - id: COIN-C
+    question: "Will coin C land heads?"
+    true_prob: 0.55
+    resolve_round: 999
+
+agents:
+  # five LLM traders, best-informed to worst-informed (smaller sigma = sharper signal).
+  # They are the entire market: every order on the book comes from one of these five.
+  - id: llm1
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.04, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm2
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.06, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm3
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.08, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm4
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.10, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm5
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.12, temperature: 0.7, max_tool_calls: 8 }
+
+news:
+  enabled: true
+  mode: prob
+  sigma_decay: 0.8
+  disclose_sigma: true

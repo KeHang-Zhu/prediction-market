@@ -1,0 +1,41 @@
+# Demo with a live LLM trader (Gemini via Vertex). One market keeps each step to a
+# single model call. The web UI runs this in SINGLE-STEP mode only (LLM calls are
+# slow / rate-limited), so advance with the step button and watch the reasoning panel.
+seed: 7
+rounds: 100
+max_actions_per_agent: 8
+allow_self_trade: true
+depth_k: 8
+run_name: demo_llm
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.62
+    resolve_round: 999
+
+agents:
+  - id: noise
+    type: noise
+    count: 2
+    initial_cash: 200000
+    params: { q: 0.6, w: 8, max_qty: 10 }
+  - id: mm
+    type: mm
+    count: 1
+    initial_cash: 400000
+    params: { spread: 3, size: 15 }
+  - id: gemini          # the live LLM trader (model from .env GEMINI_MODEL)
+    type: llm
+    count: 1
+    initial_cash: 200000
+    params: { temperature: 0.7 }
+  - id: me
+    type: human
+    count: 1
+    initial_cash: 100000
+
+news:
+  enabled: true
+  every_rounds: 10
+  epsilon: 0.2
