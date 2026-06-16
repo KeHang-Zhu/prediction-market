@@ -107,6 +107,7 @@ interface State {
   hasLlm: boolean
   busy: boolean
   saveFlash: boolean
+  builderOpen: boolean
   scenarios: Scenario[]
   recordings: Recording[]
   llmCalls: LlmCall[]
@@ -133,6 +134,10 @@ interface State {
   reset: () => void
   loadConfig: (name: string) => void
   setSpeed: (v: number) => void
+  // scenario builder
+  openBuilder: () => void
+  closeBuilder: () => void
+  saveScenario: (name: string, spec: any) => void
   // view
   setViewRound: (r: number) => void
   goLive: () => void
@@ -170,6 +175,7 @@ export const useStore = create<State>((set, get) => ({
   hasLlm: false,
   busy: false,
   saveFlash: false,
+  builderOpen: false,
   scenarios: [],
   recordings: [],
   llmCalls: [],
@@ -212,6 +218,9 @@ export const useStore = create<State>((set, get) => ({
   resume: (name) => get().send({ type: 'resume', config: name }),
   reset: () => get().send({ type: 'reset_run' }),
   loadConfig: (name) => get().send({ type: 'load', config: name }),
+  openBuilder: () => set({ builderOpen: true }),
+  closeBuilder: () => set({ builderOpen: false }),
+  saveScenario: (name, spec) => get().send({ type: 'save_scenario', name, spec }),
   setSpeed: (v) => {
     set((s) => ({ playback: { ...s.playback, speed: v } }))
     get().send({ type: 'speed', value: v })
@@ -258,7 +267,9 @@ export const useStore = create<State>((set, get) => ({
         break
       }
       case 'saved': {
-        set({ saveFlash: true })
+        // a save_scenario reply (file under templates/) also closes the builder modal;
+        // the load it triggered already reset + refreshed the picker.
+        set({ saveFlash: true, builderOpen: (msg.file || '').startsWith('templates/') ? false : s.builderOpen })
         setTimeout(() => set({ saveFlash: false }), 2000)
         break
       }

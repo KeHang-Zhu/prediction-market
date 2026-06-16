@@ -12,6 +12,7 @@ import Showcase from './components/Showcase'
 import MatchingWalkthrough from './components/MatchingWalkthrough'
 import MatchingTutorial from './components/MatchingTutorial'
 import AgentWalkthrough from './components/AgentWalkthrough'
+import ScenarioBuilder from './components/ScenarioBuilder'
 
 export default function App() {
   const connect = useStore((s) => s.connect)
@@ -22,10 +23,11 @@ export default function App() {
     connect()
   }, [connect])
 
-  // explainer demos take over the whole screen (they carry their own back/nav controls)
-  if (view === 'tutorial') return <MatchingTutorial />
-  if (view === 'matching') return <MatchingWalkthrough />
-  if (view === 'walkthrough') return <AgentWalkthrough />
+  // explainer demos take over the whole screen (they carry their own back/nav controls).
+  // The scenario builder is a modal overlay reachable from every view.
+  if (view === 'tutorial') return <><MatchingTutorial /><ScenarioBuilder /></>
+  if (view === 'matching') return <><MatchingWalkthrough /><ScenarioBuilder /></>
+  if (view === 'walkthrough') return <><AgentWalkthrough /><ScenarioBuilder /></>
 
   const snap = snapshotAt(snapshots, maxRound)
   // The layout is driven by the scenario, not a manual toggle: agentic (LLM) scenarios
@@ -67,6 +69,7 @@ export default function App() {
           </>
         )}
       </div>
+      <ScenarioBuilder />
     </div>
   )
 }

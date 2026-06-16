@@ -83,6 +83,7 @@ export interface ConsoleLine {
 
 export interface Scenario {
   file: string
+  builtin?: boolean   // true = curated built-in YAML; false = user-built template
 }
 
 export interface Recording {

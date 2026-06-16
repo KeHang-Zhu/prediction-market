@@ -21,6 +21,7 @@ function Btn({ onClick, children, title, active, disabled }: any) {
 
 export default function TransportBar() {
   const t = useT()
+  const lang = useStore((s) => s.lang)
   const playback = useStore((s) => s.playback)
   const maxRound = useStore((s) => s.maxRound)
   const viewRound = useStore((s) => s.viewRound)
@@ -37,6 +38,7 @@ export default function TransportBar() {
   const resume = useStore((s) => s.resume)
   const reset = useStore((s) => s.reset)
   const loadConfig = useStore((s) => s.loadConfig)
+  const openBuilder = useStore((s) => s.openBuilder)
   const setSpeed = useStore((s) => s.setSpeed)
   const setViewRound = useStore((s) => s.setViewRound)
   const goLive = useStore((s) => s.goLive)
@@ -51,7 +53,10 @@ export default function TransportBar() {
     file === 'demo.yaml' ? t.scenarioHuman
     : file === 'demo5.yaml' ? t.scenarioLlm
     : file === 'llm5_only.yaml' ? t.scenarioLlmOnly
+    : file.startsWith('templates/') ? file.replace(/^templates\//, '').replace(/\.ya?ml$/, '')
     : file
+  const builtinScenarios = scenarios.filter((s) => s.builtin !== false)
+  const templateScenarios = scenarios.filter((s) => s.builtin === false)
   const fmtTs = (ts: string) => {
     const m = ts.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})/)
     return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : ts
@@ -78,10 +83,22 @@ export default function TransportBar() {
               onChange={(e) => e.target.value && loadConfig(e.target.value)}
               className="max-w-44 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 focus:outline-none"
             >
-              {scenarios.map((s) => <option key={s.file} value={s.file}>{scenarioLabel(s.file)}</option>)}
+              {builtinScenarios.map((s) => <option key={s.file} value={s.file}>{scenarioLabel(s.file)}</option>)}
+              {templateScenarios.length > 0 && (
+                <optgroup label={lang === 'zh' ? '模板' : 'Templates'}>
+                  {templateScenarios.map((s) => <option key={s.file} value={s.file}>{scenarioLabel(s.file)}</option>)}
+                </optgroup>
+              )}
             </select>
           </label>
         )}
+        <button
+          onClick={openBuilder}
+          title={lang === 'zh' ? '新建场景' : 'New scenario'}
+          className="shrink-0 whitespace-nowrap rounded-md border border-blue-200 bg-white px-2.5 py-1 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+        >
+          ＋ {lang === 'zh' ? '新建' : 'New'}
+        </button>
         {myRecordings.length > 0 && (
           <label className="flex shrink-0 items-center gap-1.5 text-sm">
             <span className="whitespace-nowrap text-slate-400">{t.recordingsGroup}</span>

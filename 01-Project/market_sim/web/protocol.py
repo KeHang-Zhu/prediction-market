@@ -3,15 +3,16 @@
 Client -> server (JSON, discriminated on ``type``):
   {"type": "play"} | {"type": "pause"} | {"type": "step"}
   {"type": "speed", "value": <rounds/sec>}
-  {"type": "load", "config": "<scenario.yaml | recording.jsonl>"}
+  {"type": "load", "config": "<scenario.yaml | templates/x.yaml | recording.jsonl>"}
   {"type": "save"}                     # persist the current live run to disk
+  {"type": "save_scenario", "name": "<display name>", "spec": {...}}  # build+save a template
   {"type": "reset_run"}
   {"type": "command", "id": <str>, "line": "<raw CLI line>"}
   {"type": "seek", "round": <int>}     # advisory; scrubbing is client-side
 
 Server -> client:
   {"type": "hello", "playback": {...}, "scenarios": [...], "recordings": [...]}
-  {"type": "library", "scenarios": [...], "recordings": [...]}   # picker refresh
+  {"type": "library", "scenarios": [{"file", "builtin"}...], "recordings": [...]}  # picker refresh
   {"type": "reset"}                                  # a fresh run started
   {"type": "event_batch", "events": [<event dict>...]}
   {"type": "command_result", "id", "ok", "text", "data", "error"}

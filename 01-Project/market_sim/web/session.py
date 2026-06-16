@@ -46,6 +46,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # are intentionally NOT offered in the picker.
 SCENARIO_FILES = ("demo.yaml", "demo5.yaml", "llm5_only.yaml", "llm5_open.yaml", "llm5_orders.yaml")
 
+# user-built scenario templates (from the web builder) live here, listed alongside the
+# built-ins in the picker as "templates/<slug>.yaml".
+_TEMPLATES_DIR = _PROJECT_ROOT / "templates"
+
 
 def _last_round(path: Path) -> int:
     """The final round number of a recording, read cheaply from the file's tail
@@ -81,8 +85,31 @@ class SimulationSession(Session):
     # --- available scenario configs + recordings (UI dropdown) ---
 
     def scenarios(self) -> list[dict]:
-        """The whitelisted scenarios offered in the picker, in display order."""
-        return [{"file": f} for f in SCENARIO_FILES if (_PROJECT_ROOT / f).exists()]
+        """Scenarios offered in the picker: the built-in whitelist (display order) first,
+        then any user-built templates under templates/*.yaml."""
+        out = [{"file": f, "builtin": True}
+               for f in SCENARIO_FILES if (_PROJECT_ROOT / f).exists()]
+        if _TEMPLATES_DIR.exists():
+            for p in sorted(_TEMPLATES_DIR.glob("*.yaml")):
+                out.append({"file": f"templates/{p.name}", "builtin": False})
+        return out
+
+    def save_template(self, name: str, spec: dict) -> str:
+        """Build a Config from a high-level spec, write it as templates/<slug>.yaml, and
+        return the relative name. Raises on an invalid spec or a name that collides with a
+        built-in run_name. Overwrites an existing same-slug template (re-save = edit)."""
+        from market_sim.runner.builder import BUILTIN_RUN_NAMES, build_config, dump_config, slugify
+        spec = dict(spec or {})
+        spec.setdefault("name", name)
+        slug = slugify(name)
+        if slug in BUILTIN_RUN_NAMES:
+            raise ValueError(f"'{slug}' is a reserved built-in name; choose another")
+        config = build_config(spec)            # raises pydantic.ValidationError on a bad spec
+        path = _TEMPLATES_DIR / f"{slug}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.resolve().relative_to(_TEMPLATES_DIR.resolve())  # defensive: stay under templates/
+        dump_config(config, path)
+        return f"templates/{slug}.yaml"
 
     def recordings(self) -> list[dict]:
         """Saved runs for the history picker — one per launch, grouped under their
@@ -102,11 +129,22 @@ class SimulationSession(Session):
         return out
 
     def load_config_file(self, name: str) -> bool:
-        """Switch to a named scenario config from the project root (whitelisted)."""
-        if name not in SCENARIO_FILES or not (_PROJECT_ROOT / name).exists():
+        """Switch to a built-in scenario (whitelisted, project root) or a user template
+        (templates/*.yaml, path-confined)."""
+        if name in SCENARIO_FILES and (_PROJECT_ROOT / name).exists():
+            path = _PROJECT_ROOT / name
+        elif name.startswith("templates/") and name.endswith(".yaml"):
+            path = _PROJECT_ROOT / name
+            try:                              # keep template loads confined to templates/
+                path.resolve().relative_to(_TEMPLATES_DIR.resolve())
+            except ValueError:
+                return False
+            if not path.exists():
+                return False
+        else:
             return False
         self.replay = None
-        self.init(load_config(_PROJECT_ROOT / name))
+        self.init(load_config(path))
         self.current_config = name
         self.current_scenario = self.config.run_name
         return True

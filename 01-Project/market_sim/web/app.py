@@ -112,6 +112,30 @@ async def _handle(msg: dict, ws: WebSocket) -> None:
             await ws.send_json({"type": "saved", "file": saved})
         else:
             await ws.send_json(error_msg("nothing to save yet — run at least one round"))
+    elif t == "save_scenario":
+        # build a Config from the builder form's spec, write it as templates/<slug>.yaml,
+        # then load it (reusing the load-success broadcast sequence so it appears in the
+        # picker and becomes the active run).
+        name = (msg.get("name") or "").strip()
+        spec = msg.get("spec") or {}
+        if not name:
+            await ws.send_json(error_msg("a scenario needs a name"))
+            return
+        async with session.lock:
+            try:
+                rel = session.save_template(name, spec)
+                ok = session.load_config_file(rel)
+            except Exception as exc:  # ValidationError / ValueError / OSError -> user error
+                await ws.send_json(error_msg(f"could not save scenario: {exc}"))
+                return
+        if not ok:
+            await ws.send_json(error_msg("scenario saved but failed to load"))
+            return
+        await session.broadcast({"type": "reset"})
+        await session.flush()
+        await session.broadcast_playback()
+        await session.broadcast_library()
+        await ws.send_json({"type": "saved", "file": rel})
     elif t == "resume":
         name = msg.get("config", "")
         async with session.lock:
