@@ -35,6 +35,17 @@ class Ledger:
     def unlock_sell(self, agent_id: str, market_id: str, token: Token, qty: int) -> None:
         self.accounts[agent_id].add_locked_shares(market_id, token, -qty)
 
+    # --- inter-account cash transfer (peer-to-peer, no pool/share touch) ---
+
+    def transfer(self, from_id: str, to_id: str, cents: int) -> None:
+        """Move ``cents`` of available cash from one account to another. Conserves the
+        system total (INV-A) — cash is moved, never created. The caller validates that
+        both accounts exist, the amount is positive, and the source can cover it."""
+        src = self.accounts[from_id]
+        dst = self.accounts[to_id]
+        src.cash_available -= cents
+        dst.cash_available += cents
+
     # --- settlement (p is always the YES-coords maker price) ---
 
     def settle_transfer(

@@ -51,7 +51,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     # gets huge for long runs (frontend dedupes by event_id)
     await ws.send_json({"type": "hello", "playback": session.playback_state(),
                         "scenarios": session.scenarios(), "recordings": session.recordings(),
-                        "agent_meta": agentic_agent_meta()})
+                        "agent_meta": agentic_agent_meta(session.current_capabilities())})
     log = session.event_log
     for i in range(0, len(log), EVENT_CHUNK):
         # event_log holds Event objects (live) or plain dicts (replay / resumed) —

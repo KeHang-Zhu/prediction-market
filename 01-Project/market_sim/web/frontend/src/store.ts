@@ -249,7 +249,12 @@ export const useStore = create<State>((set, get) => ({
         break
       }
       case 'library': {
-        set({ scenarios: msg.scenarios || [], recordings: msg.recordings || [] })
+        set({
+          scenarios: msg.scenarios || [], recordings: msg.recordings || [],
+          // agent_meta rides along so the walkthrough tool catalogue tracks the
+          // just-loaded scenario's capabilities; keep the old value if absent.
+          agentMeta: msg.agent_meta ?? s.agentMeta,
+        })
         break
       }
       case 'saved': {

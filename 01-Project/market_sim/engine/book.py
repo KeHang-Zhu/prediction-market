@@ -97,6 +97,29 @@ class OwnerBook:
                     return maker
             return None
 
+    def crossing_qty(self, taker: Order, skip_agent: str | None = None) -> int:
+        """Total resting maker quantity that crosses ``taker`` at/within its limit.
+
+        Same iteration as ``best_opposite_crossing`` but SUMS ``remaining`` instead of
+        returning the first maker — used for the FOK fill-or-kill pre-check. ``skip_agent``
+        MUST match the one ``_match`` uses (self-trade prevention), or the count and the
+        actual fill disagree.
+        """
+        total = 0
+        if taker.book_side is BookSide.BID:
+            for price in self._asks.irange(maximum=taker.book_price):
+                for maker in self._asks[price]:
+                    if skip_agent is not None and maker.agent_id == skip_agent:
+                        continue
+                    total += maker.remaining
+        else:
+            for price in self._bids.irange(minimum=taker.book_price, reverse=True):
+                for maker in self._bids[price]:
+                    if skip_agent is not None and maker.agent_id == skip_agent:
+                        continue
+                    total += maker.remaining
+        return total
+
     def aggregated(self, depth: int | None = None) -> dict[str, list[list[int]]]:
         """Top-of-book ladder aggregated by price level (best-first).
 

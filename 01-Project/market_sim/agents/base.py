@@ -31,6 +31,12 @@ class PlaceOrder:
     # round-end place_order/invalid_action event so the UI can correlate the queued order
     # with its fill/reject result. None for scripted bots -> not written to the event.
     client_id: str | None = None
+    # time-in-force + modifiers (string for a JSON-trivial action; the runner maps tif to
+    # the engine TimeInForce enum). Defaults = plain GTC limit order, so scripted bots that
+    # build PlaceOrder(market, token, side, price, qty) are unchanged.
+    tif: str = "GTC"                  # "GTC" | "GTD" | "FOK" | "FAK"
+    post_only: bool = False           # GTC/GTD only: reject if it would cross on entry
+    expire_round: int | None = None   # GTD only: last round valid
 
 
 @dataclass
@@ -45,7 +51,37 @@ class Hold:
     type: str = "hold"
 
 
-Action = PlaceOrder | Cancel | Hold
+# --- open-scenario actions (gated by Config.capabilities; only LLM/console paths
+#     produce them, so scripted byte-exact runs are unaffected). Like PlaceOrder they
+#     carry a client_id set by tool-using agents to correlate the queued announcement
+#     with its round-end settle/reject result; None for console/CLI use. ---
+
+@dataclass
+class Transfer:
+    to: str                 # recipient account id (must already exist)
+    amount: int             # cents of the caller's available cash to move
+    type: str = "transfer"
+    client_id: str | None = None
+
+
+@dataclass
+class CreateAccount:
+    account_id: str         # id of the new passive wallet
+    initial_cash: int       # funded FROM the creator's available cash
+    type: str = "create_account"
+    client_id: str | None = None
+
+
+@dataclass
+class CreateMarket:
+    market_id: str
+    question: str
+    resolve_round: int      # must be > the current round; system fixes the hidden truth
+    type: str = "create_market"
+    client_id: str | None = None
+
+
+Action = PlaceOrder | Cancel | Hold | Transfer | CreateAccount | CreateMarket
 
 
 # --- observation views (built from the frozen snapshot) ---
@@ -118,6 +154,10 @@ class Agent:
         self.agent_id = agent_id
         self.params = params or {}
         self.rng: Optional[np.random.Generator] = None  # assigned by the runner
+        # the scenario's capability flags (Config.capabilities), assigned by the runner
+        # like rng; None means "all off" (existing scenarios). Tool-using agents read it
+        # to decide which extra tools to declare.
+        self.caps = None
         # set by LLM agents to a {belief, rationale, ok, ...} dict each round; the
         # runner emits it as an `llm_call` event and resets it to None.
         self.last_call: dict | None = None

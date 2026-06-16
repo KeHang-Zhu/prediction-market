@@ -73,6 +73,9 @@ export default function AgentWalkthrough() {
     if (n === 'commit_view') return { kind: 'status', body: tr('✓ committed — you may now place orders', '✓ 已提交观点 — 现在可以下单') }
     if (n === 'place_order') return { kind: 'status', body: tr('✓ queued — settles at round end (blind submit)', '✓ 已排队 — 轮末盲投结算') }
     if (n === 'cancel_order') return { kind: 'status', body: tr('✓ queued', '✓ 已排队') }
+    if (n === 'transfer') return { kind: 'status', body: tr('✓ queued — cash transfer settles at round end', '✓ 已排队 — 转账轮末结算') }
+    if (n === 'create_account') return { kind: 'status', body: tr('✓ queued — new wallet created at round end', '✓ 已排队 — 轮末创建钱包') }
+    if (n === 'create_market') return { kind: 'status', body: tr('✓ queued — new market opens at round end', '✓ 已排队 — 轮末开市') }
     if (n === 'finish') return { kind: 'status', body: tr('✓ finished — turn ends', '✓ 结束本轮') }
     return { kind: 'status', body: tr('(unknown tool)', '(未知工具)') }
   }

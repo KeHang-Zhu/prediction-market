@@ -22,6 +22,7 @@ from .models import (
     PlaceResult,
     SettleType,
     Side,
+    TimeInForce,
     Token,
     Trade,
 )
@@ -53,7 +54,8 @@ class Exchange:
     # ------------------------------------------------------------------ place
 
     def place_order(
-        self, agent_id: str, market_id: str, token: Token, side: Side, limit_price: int, qty: int, round_no: int
+        self, agent_id: str, market_id: str, token: Token, side: Side, limit_price: int, qty: int, round_no: int,
+        *, tif: TimeInForce = TimeInForce.GTC, post_only: bool = False, expire_round: int | None = None,
     ) -> PlaceResult:
         market = self.markets.get(market_id)
         if market is None:
@@ -68,6 +70,12 @@ class Exchange:
         if acct is None:
             return PlaceResult("rejected", None, reason="unknown_agent")
 
+        # advanced-type validation (reject before locking)
+        if post_only and tif in (TimeInForce.FOK, TimeInForce.FAK):
+            return PlaceResult("rejected", None, reason="post_only_incompatible_tif")
+        if tif is TimeInForce.GTD and (expire_round is None or expire_round < round_no):
+            return PlaceResult("rejected", None, reason="expire_round_in_past")
+
         # budget / inventory check — reject with NOTHING locked (clean D3 condition)
         if side is Side.BUY:
             need = limit_price * qty
@@ -76,6 +84,20 @@ class Exchange:
         else:
             if qty > acct.available_shares(market_id, token):
                 return PlaceResult("rejected", None, reason="insufficient_shares")
+
+        skip = None if self.allow_self_trade else agent_id  # SAME skip _match uses
+        book = self.books[market_id]
+        # post-only + FOK pre-checks use a probe order (book coords only) so a rejection
+        # NEVER consumes an order id or lock — keeping the plain GTC path byte-identical.
+        # crossing_qty/best_opposite_crossing MUST use this same `skip` as _match, else a
+        # self-order-heavy book would pass the FOK check then under-fill and silently rest.
+        if post_only or tif is TimeInForce.FOK:
+            probe = Order(order_id=0, agent_id=agent_id, market_id=market_id, token=token,
+                          side=side, limit_price=limit_price, qty=qty)
+            if post_only and book.best_opposite_crossing(probe, skip_agent=skip) is not None:
+                return PlaceResult("rejected", None, reason="post_only_would_cross")
+            if tif is TimeInForce.FOK and book.crossing_qty(probe, skip_agent=skip) < qty:
+                return PlaceResult("rejected", None, reason="fok_unfillable")
 
         # accept: assign ids, lock, then match
         self._oid += 1
@@ -90,17 +112,42 @@ class Exchange:
             qty=qty,
             seq_id=self._seq,
             round_placed=round_no,
+            tif=tif,
+            post_only=post_only,
+            expire_round=expire_round if tif is TimeInForce.GTD else None,
         )
         if side is Side.BUY:
             self.ledger.lock_buy(agent_id, limit_price * qty)
         else:
             self.ledger.lock_sell(agent_id, market_id, token, qty)
 
+        # post-only: verified above it won't cross -> rest without matching.
+        if post_only:
+            order.status = OrderStatus.OPEN
+            book.add_resting(order)
+            return PlaceResult("accepted", order.order_id, fills=[], filled_qty=0,
+                               resting_qty=order.remaining)
+
         fills = self._match(order, market)
 
+        # FAK (IOC) / FOK-already-full: kill any remainder instead of resting. FOK is
+        # guaranteed full by the pre-check, so its remainder is 0; FAK unlocks the rest
+        # exactly like cancel_order.
+        if tif in (TimeInForce.FOK, TimeInForce.FAK):
+            rem = order.remaining
+            if rem > 0:
+                if side is Side.BUY:
+                    self.ledger.unlock_buy(agent_id, limit_price * rem)
+                else:
+                    self.ledger.unlock_sell(agent_id, market_id, token, rem)
+            order.status = OrderStatus.FILLED if order.filled_qty == qty else OrderStatus.CANCELLED
+            return PlaceResult("accepted", order.order_id, fills=fills,
+                               filled_qty=order.filled_qty, resting_qty=0)
+
+        # GTC / GTD: rest any remainder (GTD additionally carries expire_round).
         if order.remaining > 0:
             order.status = OrderStatus.PARTIAL if order.filled_qty > 0 else OrderStatus.OPEN
-            self.books[market_id].add_resting(order)
+            book.add_resting(order)
         else:
             order.status = OrderStatus.FILLED
 
@@ -193,6 +240,57 @@ class Exchange:
             book.remove(order_id)
             return CancelResult("cancelled", order_id)
         return CancelResult("not_found", order_id, reason="not_found")
+
+    def expire_due(self, round_no: int) -> list[tuple[str, int]]:
+        """Cancel resting GTD orders whose validity has passed (``expire_round < round_no``),
+        unlocking exactly like ``cancel_order``. Returns ``(market_id, order_id)`` pairs in
+        deterministic (market, order_id) order. No GTD orders -> empty -> a pure no-op, so
+        scripted runs (which never set ``expire_round``) emit nothing and stay byte-exact."""
+        expired: list[tuple[str, int]] = []
+        for mid in sorted(self.books):
+            book = self.books[mid]
+            due = [o for o in sorted(book.all_orders(), key=lambda o: o.order_id)
+                   if o.expire_round is not None and o.expire_round < round_no]
+            for order in due:
+                rem = order.remaining
+                if order.side is Side.BUY:
+                    self.ledger.unlock_buy(order.agent_id, order.limit_price * rem)
+                else:
+                    self.ledger.unlock_sell(order.agent_id, mid, order.token, rem)
+                order.status = OrderStatus.CANCELLED
+                book.remove(order.order_id)
+                expired.append((mid, order.order_id))
+        return expired
+
+    # ------------------------------------------------- accounts & markets (open scenario)
+
+    def create_account(self, account_id: str, funder_id: str, initial_cash: int) -> Account:
+        """Create a new PASSIVE wallet ``account_id`` funded FROM ``funder_id``'s available
+        cash. Money is moved, never created, so INV-A and ``ledger.total0`` are unchanged.
+        The caller validates: ``account_id`` is new, ``funder_id`` exists, ``initial_cash``
+        is in [0, funder.cash_available]. The wallet starts empty (no positions/orders);
+        it only holds and forwards cash (it does not trade on its own)."""
+        acct = Account(account_id, cash_available=0)
+        self.ledger.accounts[account_id] = acct
+        if initial_cash:
+            self.ledger.transfer(funder_id, account_id, initial_cash)
+        return acct
+
+    def create_market(
+        self, market_id: str, question: str, resolve_round: int, true_prob: float, outcome: int
+    ) -> Market:
+        """Open a brand-new market mid-run. It starts empty (pool=0, no shares, empty book),
+        so it preserves every invariant. The latent ``true_prob``/``outcome`` are sampled by
+        the runner (so the creator never sees them) and passed in here. The market joins the
+        normal machinery — signals, snapshots, resolution — from the next round automatically."""
+        m = Market(id=market_id, question=question, true_prob=true_prob, resolve_round=resolve_round)
+        m.outcome = outcome
+        self.markets[market_id] = m
+        self.books[market_id] = OwnerBook(market_id)
+        self.last_price[market_id] = None
+        self.volume[market_id] = 0
+        self.trades[market_id] = []
+        return m
 
     # ------------------------------------------------------------------ reads
 

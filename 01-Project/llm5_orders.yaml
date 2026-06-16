@@ -1,0 +1,73 @@
+# "5 LLM — Advanced Orders": the demo5 world (five persistent, tool-using LLM traders with
+# PRIVATE, heterogeneous, decaying signals, plus a market-maker liquidity backbone) — with
+# ALL advanced order types OPEN. On top of plain GTC limit orders, the five LLMs may also
+# place:
+#   - FOK (market): fill the full qty now or cancel       (price = worst acceptable price)
+#   - FAK (market, IOC): fill what's available now, kill the rest
+#   - GTD: a limit order that auto-expires after `expire_round`
+#   - post_only: a GTC/GTD order rejected if it would trade on entry (add-liquidity-only)
+# The 2 market makers + noise trader give the book enough resting liquidity for market
+# orders to actually fill. Run OFFLINE (CLI) and replay in the browser.
+seed: 42
+rounds: 50
+max_actions_per_agent: 12
+allow_self_trade: true
+depth_k: 8
+run_name: llm5_orders
+
+capabilities:
+  advanced_orders: true
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.65
+    resolve_round: 999
+  - id: COIN-B
+    question: "Will coin B land heads?"
+    true_prob: 0.40
+    resolve_round: 999
+  - id: COIN-C
+    question: "Will coin C land heads?"
+    true_prob: 0.55
+    resolve_round: 999
+
+agents:
+  # five LLM traders, best-informed to worst-informed (smaller sigma = sharper signal)
+  - id: llm1
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.04, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm2
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.06, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm3
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.08, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm4
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.10, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm5
+    type: llm_agentic
+    initial_cash: 200000
+    params: { signal_sigma: 0.12, temperature: 0.7, max_tool_calls: 8 }
+  # liquidity backbone so market orders (FOK/FAK) have something to fill against
+  - id: mm
+    type: mm
+    count: 2
+    initial_cash: 500000
+    params: { spread: 3, size: 15 }
+  - id: noise
+    type: noise
+    count: 1
+    initial_cash: 200000
+    params: { q: 0.5, w: 8, max_qty: 10 }
+
+news:
+  enabled: true
+  mode: prob
+  sigma_decay: 0.8
+  disclose_sigma: true

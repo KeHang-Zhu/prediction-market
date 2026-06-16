@@ -28,6 +28,17 @@ class AgentConfig(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class Capabilities(BaseModel):
+    """Agent-action capabilities, gated per scenario (default OFF). When enabled, the
+    matching agent-API endpoint + LLM tool become available; existing scenarios that
+    leave these off behave exactly as before (the endpoints return ``not_supported``)."""
+
+    transfer: bool = False         # move cash to another existing account
+    create_account: bool = False   # create a passive sub-wallet funded from your own cash
+    create_market: bool = False    # open a new market (system fixes its hidden truth)
+    advanced_orders: bool = False  # market orders (FOK/FAK), GTD expiry, post-only for LLMs
+
+
 class NewsConfig(BaseModel):
     enabled: bool = False
     mode: str = "lean"                 # "lean": legacy binary public signal every N rounds
@@ -51,6 +62,7 @@ class Config(BaseModel):
     markets: list[MarketConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    capabilities: Capabilities = Field(default_factory=Capabilities)
 
     # reserved institutional-variation switches (V1; default off)
     fees_bps: int = 0

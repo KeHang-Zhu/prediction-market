@@ -133,7 +133,8 @@ def cmd_tape(session: Session, market: str, last: int = 20, **_) -> CommandResul
 
 
 def cmd_order_place(session: Session, agent: str, market: str, token: str, side: str,
-                    price: int, qty: int, **_) -> CommandResult:
+                    price: int, qty: int, tif: str = "GTC", order_type: str = None,
+                    post_only: bool = False, expire_round: int | None = None, **_) -> CommandResult:
     runner = session.require_runner()
     if agent not in runner.agents:
         return CommandResult(False, "order_place", error=f"unknown agent '{agent}'")
@@ -142,7 +143,10 @@ def cmd_order_place(session: Session, agent: str, market: str, token: str, side:
         sd = Side(side.lower())
     except ValueError:
         return CommandResult(False, "order_place", error="token must be YES/NO and side buy/sell")
-    action = PlaceOrder(market, tok, sd, int(price), int(qty))
+    tif_val = str(order_type or tif or "GTC").upper()  # --order-type is an alias for --tif
+    action = PlaceOrder(market, tok, sd, int(price), int(qty),
+                        tif=tif_val, post_only=bool(post_only),
+                        expire_round=int(expire_round) if expire_round is not None else None)
     res = session.submit_order(agent, action)
     info = {"submitted": {"agent": agent, "market": market, "token": tok.value,
                           "side": sd.value, "price": int(price), "qty": int(qty)}}

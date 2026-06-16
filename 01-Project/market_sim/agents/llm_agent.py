@@ -16,7 +16,17 @@ import json
 
 from market_sim.engine.models import Side, Token
 
-from .base import Action, Agent, Cancel, DecisionContext, Hold, PlaceOrder
+from .base import (
+    Action,
+    Agent,
+    Cancel,
+    CreateAccount,
+    CreateMarket,
+    DecisionContext,
+    Hold,
+    PlaceOrder,
+    Transfer,
+)
 
 
 class LLMAgent(Agent):
@@ -168,8 +178,56 @@ view, and never skip reading your own signal. (Trading is optional — but if yo
 must have committed first; the wrap-up finish is not optional.)"""
 
 
-def _build_agentic_tools():
-    """FunctionDeclarations for the agent API (built lazily — needs google.genai)."""
+_CAPS_SYSTEM_EXTRA = """
+
+NEW ACTIONS (enabled this scenario) — like orders, these are QUEUED (blind submit) and
+settle at round end, and they REQUIRE a committed view first:
+- transfer(to, amount): move cents of YOUR available cash to ANOTHER existing account. Use
+  it to fund a wallet you created or to move money to a partner.
+- create_account(account_id, initial_cash): create a NEW passive wallet funded from YOUR
+  cash. It only holds/forwards cash — it does NOT trade, gets no signal, no turn. You can
+  later transfer cash in or out of it.
+- create_market(market_id, question, resolve_round): open a NEW market. The SYSTEM secretly
+  fixes its hidden true probability and outcome — you do NOT choose or see them; from next
+  round you get a private signal on it like any other market. resolve_round must be > now."""
+
+
+_ADV_ORDERS_SYSTEM_EXTRA = """
+
+ORDER TYPES (enabled this scenario) — place_order takes an optional order_type:
+- GTC (default): a limit order that rests on the book until filled or cancelled.
+- GTD: a limit order that auto-expires after expire_round (give expire_round = the last
+  round it should stay live); otherwise like GTC.
+- FOK (market): fill the FULL qty immediately against resting liquidity, or the whole
+  order is cancelled. Set price as your WORST acceptable price (buy high e.g. 99, sell low).
+- FAK (market, IOC): fill whatever is available immediately, cancel the rest. Same price =
+  worst-price cap.
+- post_only (GTC/GTD only): the order is REJECTED if it would trade on entry — use it to
+  make sure you only ever add liquidity (rest), never take.
+Market orders only fill against existing resting orders, so they need a liquidity backbone
+(market makers) to do anything — on a thin book a FOK/FAK may fill little or nothing."""
+
+
+def _system_for(caps) -> str:
+    """The system prompt for this agent: the base prompt unchanged when no extra
+    capabilities are on (so existing scenarios are byte-identical), plus a short section
+    per capability group the scenario enables."""
+    extra = ""
+    if caps is not None and (getattr(caps, "transfer", False)
+                             or getattr(caps, "create_account", False)
+                             or getattr(caps, "create_market", False)):
+        extra += _CAPS_SYSTEM_EXTRA
+    if caps is not None and getattr(caps, "advanced_orders", False):
+        extra += _ADV_ORDERS_SYSTEM_EXTRA
+    return _AGENTIC_SYSTEM + extra
+
+
+def _build_agentic_tools(caps=None):
+    """FunctionDeclarations for the agent API (built lazily — needs google.genai).
+
+    ``caps`` is the scenario's Config.capabilities (or None = all off). The base read +
+    trade tools are always declared; transfer / create_account / create_market are added
+    only when the scenario enables them, so existing scenarios advertise the same toolset."""
     from google.genai import types
 
     S, T = types.Schema, types.Type
@@ -178,6 +236,40 @@ def _build_agentic_tools():
         return S(type=T.OBJECT, properties=props or {}, required=required or [])
 
     market = S(type=T.STRING, description="market id, e.g. COIN-A")
+    advanced = caps is not None and getattr(caps, "advanced_orders", False)
+    # place_order has two literal forms: the base limit-only decl (byte-identical to before
+    # for scenarios with advanced_orders off) and an extended decl exposing order types.
+    if advanced:
+        place_order_decl = types.FunctionDeclaration(
+            name="place_order",
+            description="Queue an order (settles at round end). Buy NO to bet against YES. "
+                        "order_type: GTC=resting limit (default); GTD=limit that expires after "
+                        "expire_round; FOK=market, fill fully now or cancel; FAK=market, fill "
+                        "what's available now and kill the rest. For market orders set price as "
+                        "your WORST acceptable price (buy high / sell low). post_only (GTC/GTD "
+                        "only) rejects the order if it would trade on entry.",
+            parameters=obj({
+                "market": market,
+                "token": S(type=T.STRING, enum=["YES", "NO"]),
+                "side": S(type=T.STRING, enum=["buy", "sell"]),
+                "price": S(type=T.INTEGER, description="integer cents 1..99 (worst price for market orders)"),
+                "qty": S(type=T.INTEGER, description="positive integer"),
+                "order_type": S(type=T.STRING, enum=["GTC", "GTD", "FOK", "FAK"],
+                                description="time-in-force, optional (default GTC)"),
+                "post_only": S(type=T.BOOLEAN, description="GTC/GTD only: reject if it would cross (optional)"),
+                "expire_round": S(type=T.INTEGER, description="GTD only: last round the order stays live"),
+            }, ["market", "token", "side", "price", "qty"]))
+    else:
+        place_order_decl = types.FunctionDeclaration(
+            name="place_order",
+            description="Queue a limit order (settles at round end). Buy NO to bet against YES.",
+            parameters=obj({
+                "market": market,
+                "token": S(type=T.STRING, enum=["YES", "NO"]),
+                "side": S(type=T.STRING, enum=["buy", "sell"]),
+                "price": S(type=T.INTEGER, description="integer cents 1..99 in the token's own coords"),
+                "qty": S(type=T.INTEGER, description="positive integer"),
+            }, ["market", "token", "side", "price", "qty"]))
     decls = [
         types.FunctionDeclaration(
             name="get_markets",
@@ -207,16 +299,7 @@ def _build_agentic_tools():
             name="get_news_detail",
             description="Full text + reliability of one news item by id.",
             parameters=obj({"id": S(type=T.INTEGER)}, ["id"])),
-        types.FunctionDeclaration(
-            name="place_order",
-            description="Queue a limit order (settles at round end). Buy NO to bet against YES.",
-            parameters=obj({
-                "market": market,
-                "token": S(type=T.STRING, enum=["YES", "NO"]),
-                "side": S(type=T.STRING, enum=["buy", "sell"]),
-                "price": S(type=T.INTEGER, description="integer cents 1..99 in the token's own coords"),
-                "qty": S(type=T.INTEGER, description="positive integer"),
-            }, ["market", "token", "side", "price", "qty"])),
+        place_order_decl,
         types.FunctionDeclaration(
             name="cancel_order",
             description="Cancel one of your open orders by id.",
@@ -242,6 +325,35 @@ def _build_agentic_tools():
                              "round — a mispricing you spotted, a prior you updated, a rival's habit you noticed"),
             }, [])),
     ]
+    if caps is not None and getattr(caps, "transfer", False):
+        decls.append(types.FunctionDeclaration(
+            name="transfer",
+            description="Move cents of YOUR available cash to ANOTHER existing account "
+                        "(queued, settles at round end like an order).",
+            parameters=obj({
+                "to": S(type=T.STRING, description="recipient account id (must already exist)"),
+                "amount": S(type=T.INTEGER, description="positive integer cents to move"),
+            }, ["to", "amount"])))
+    if caps is not None and getattr(caps, "create_account", False):
+        decls.append(types.FunctionDeclaration(
+            name="create_account",
+            description="Create a NEW passive wallet funded from YOUR available cash. It only "
+                        "holds/forwards cash — it does NOT trade, gets no signal, no turn.",
+            parameters=obj({
+                "account_id": S(type=T.STRING, description="id for the new wallet (must be unused)"),
+                "initial_cash": S(type=T.INTEGER, description="cents to fund it from your cash (>= 0)"),
+            }, ["account_id", "initial_cash"])))
+    if caps is not None and getattr(caps, "create_market", False):
+        decls.append(types.FunctionDeclaration(
+            name="create_market",
+            description="Open a NEW market. The SYSTEM secretly fixes its hidden true probability "
+                        "and outcome — you do NOT choose or see them; you get a private signal on "
+                        "it from next round like any other market.",
+            parameters=obj({
+                "market_id": S(type=T.STRING, description="id for the new market (must be unused)"),
+                "question": S(type=T.STRING, description="the yes/no question the market settles"),
+                "resolve_round": S(type=T.INTEGER, description="round it resolves on (must be > now)"),
+            }, ["market_id", "question", "resolve_round"])))
     return [types.Tool(function_declarations=decls)]
 
 
@@ -273,10 +385,38 @@ AGENTIC_TOOLS_DISPLAY = [
 ]
 
 
-def agentic_agent_meta() -> dict:
-    """The static 'what the system tells the model' bundle for the single-round
-    walkthrough demo: the system prompt + the tool catalogue. Sent once in `hello`."""
-    return {"system_prompt": _AGENTIC_SYSTEM, "tools": AGENTIC_TOOLS_DISPLAY}
+# Plain-data display rows for the capability-gated open-scenario tools — appended to the
+# walkthrough catalogue only when the active scenario enables them (keep in sync with the
+# FunctionDeclarations in _build_agentic_tools). All are "action" kind.
+_CAPS_TOOLS_DISPLAY = {
+    "transfer": {"name": "transfer", "kind": "action", "signature": "(to, amount)",
+                 "description": "Move cents of YOUR available cash to another existing account "
+                                "(queued, settles at round end)."},
+    "create_account": {"name": "create_account", "kind": "action", "signature": "(account_id, initial_cash)",
+                       "description": "Create a NEW passive wallet funded from YOUR cash — it only "
+                                      "holds/forwards cash, never trades."},
+    "create_market": {"name": "create_market", "kind": "action", "signature": "(market_id, question, resolve_round)",
+                      "description": "Open a NEW market; the system secretly fixes its hidden truth, "
+                                     "and you get a private signal on it from next round."},
+}
+
+
+def _caps_tools_display(caps) -> list:
+    """The extra walkthrough catalogue rows for whichever open-scenario tools this scenario
+    has enabled (empty for scenarios that leave them off)."""
+    if caps is None:
+        return []
+    return [row for key, row in _CAPS_TOOLS_DISPLAY.items() if getattr(caps, key, False)]
+
+
+def agentic_agent_meta(caps=None) -> dict:
+    """The 'what the system tells the model' bundle for the single-round walkthrough demo:
+    the system prompt + the tool catalogue. Capability-aware — when the active scenario
+    enables transfer/create_account/create_market, the appended system-prompt section and
+    the extra tool rows are included, matching exactly what the model is actually sent.
+    With ``caps=None`` (no scenario / capabilities off) it returns the original base bundle."""
+    return {"system_prompt": _system_for(caps),
+            "tools": AGENTIC_TOOLS_DISPLAY + _caps_tools_display(caps)}
 
 
 class ToolLoopAgent(Agent):
@@ -326,7 +466,7 @@ class ToolLoopAgent(Agent):
 
     def _tools_decls(self):
         if self._tools is None:
-            self._tools = _build_agentic_tools()
+            self._tools = _build_agentic_tools(self.caps)
         return self._tools
 
     # --- per-round wake-up briefing (minimal: cash/positions + open market ids only;
@@ -366,8 +506,14 @@ class ToolLoopAgent(Agent):
 
     def _mk_place(self, fa: dict):
         try:
+            ot = str(fa.get("order_type", "GTC")).upper()
+            if ot not in ("GTC", "GTD", "FOK", "FAK"):
+                ot = "GTC"
+            er = fa.get("expire_round")
             act = PlaceOrder(str(fa["market"]), Token(str(fa["token"]).upper()),
-                             Side(str(fa["side"]).lower()), int(fa["price"]), int(fa["qty"]))
+                             Side(str(fa["side"]).lower()), int(fa["price"]), int(fa["qty"]),
+                             tif=ot, post_only=bool(fa.get("post_only", False)),
+                             expire_round=int(er) if er is not None else None)
         except (KeyError, ValueError) as e:
             return None, {"status": "rejected", "reason": f"bad args: {e}"}
         return act, {"status": "queued", "note": "settles at round end (blind submit)"}
@@ -399,8 +545,9 @@ class ToolLoopAgent(Agent):
         view_belief: dict = {}  # YES prob per market, from commit_view (reported BEFORE trading)
         view_plan = ""        # one-line plan, from commit_view
 
+        system_prompt = _system_for(self.caps)
         for turn_index in range(self.max_tool_calls):
-            turn = provider.tool_turn(self.contents, tools, system=_AGENTIC_SYSTEM,
+            turn = provider.tool_turn(self.contents, tools, system=system_prompt,
                                       temperature=self.temperature)
             total_retries += turn.get("retries", 0)
             total_backoff += turn.get("backoff_s", 0.0)
@@ -479,9 +626,16 @@ class ToolLoopAgent(Agent):
                             # announce it NOW, in true model-call order; the fill comes later
                             # (blind submit) on the round-end place_order event, same client_id
                             if ctx.on_queue:
-                                ctx.on_queue({"client_id": act.client_id, "kind": "order",
-                                              "market": act.market, "token": act.token.value,
-                                              "side": act.side.value, "price": act.price, "qty": act.qty})
+                                qp = {"client_id": act.client_id, "kind": "order",
+                                      "market": act.market, "token": act.token.value,
+                                      "side": act.side.value, "price": act.price, "qty": act.qty}
+                                if act.tif != "GTC":
+                                    qp["tif"] = act.tif
+                                if act.post_only:
+                                    qp["post_only"] = True
+                                if act.expire_round is not None:
+                                    qp["expire_round"] = act.expire_round
+                                ctx.on_queue(qp)
                 elif name == "cancel_order":
                     if not committed:        # same gate as place_order
                         result = {"status": "rejected",
@@ -496,6 +650,58 @@ class ToolLoopAgent(Agent):
                             result = {"status": "queued"}
                             if ctx.on_queue:
                                 ctx.on_queue({"client_id": cid, "kind": "cancel", "order_id": oid})
+                        except (KeyError, ValueError) as e:
+                            result = {"status": "rejected", "reason": f"bad args: {e}"}
+                elif name == "transfer":
+                    if not committed:
+                        result = {"status": "rejected",
+                                  "reason": "call commit_view(beliefs, plan) before transferring"}
+                    else:
+                        try:
+                            to = str(fa["to"]); amt = int(fa["amount"])
+                            queue_seq += 1
+                            cid = f"{self.agent_id}:{ctx.round}:{queue_seq}"
+                            pending.append(Transfer(to, amt, client_id=cid))
+                            summary.append(f"transfer {amt}->{to}")
+                            result = {"status": "queued", "note": "settles at round end (blind submit)"}
+                            if ctx.on_queue:
+                                ctx.on_queue({"client_id": cid, "kind": "transfer",
+                                              "to": to, "amount": amt})
+                        except (KeyError, ValueError) as e:
+                            result = {"status": "rejected", "reason": f"bad args: {e}"}
+                elif name == "create_account":
+                    if not committed:
+                        result = {"status": "rejected",
+                                  "reason": "call commit_view(beliefs, plan) before creating an account"}
+                    else:
+                        try:
+                            acc = str(fa["account_id"]); ic = int(fa["initial_cash"])
+                            queue_seq += 1
+                            cid = f"{self.agent_id}:{ctx.round}:{queue_seq}"
+                            pending.append(CreateAccount(acc, ic, client_id=cid))
+                            summary.append(f"create_account {acc}(+{ic})")
+                            result = {"status": "queued", "note": "settles at round end (blind submit)"}
+                            if ctx.on_queue:
+                                ctx.on_queue({"client_id": cid, "kind": "create_account",
+                                              "account_id": acc, "initial_cash": ic})
+                        except (KeyError, ValueError) as e:
+                            result = {"status": "rejected", "reason": f"bad args: {e}"}
+                elif name == "create_market":
+                    if not committed:
+                        result = {"status": "rejected",
+                                  "reason": "call commit_view(beliefs, plan) before creating a market"}
+                    else:
+                        try:
+                            mid = str(fa["market_id"]); q = str(fa["question"])
+                            rr = int(fa["resolve_round"])
+                            queue_seq += 1
+                            cid = f"{self.agent_id}:{ctx.round}:{queue_seq}"
+                            pending.append(CreateMarket(mid, q, rr, client_id=cid))
+                            summary.append(f"create_market {mid}")
+                            result = {"status": "queued", "note": "settles at round end (blind submit)"}
+                            if ctx.on_queue:
+                                ctx.on_queue({"client_id": cid, "kind": "create_market",
+                                              "market_id": mid, "question": q, "resolve_round": rr})
                         except (KeyError, ValueError) as e:
                             result = {"status": "rejected", "reason": f"bad args: {e}"}
                 elif name == "finish":

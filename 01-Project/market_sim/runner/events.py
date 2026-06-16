@@ -25,6 +25,15 @@ EVENT_TYPES = {
     "config", "round_start", "news", "signal", "agent_view", "order_queued", "place_order",
     "cancel_order", "fill", "mint", "merge", "resolution", "payout", "snapshot",
     "invalid_action", "round_end", "llm_call", "agent_query",
+    # open-scenario agent actions (Config.capabilities; emitted at execution like place_order):
+    #   transfer        — payload {from, to, amount, client_id?}: peer-to-peer cash move
+    #   account_created — payload {account_id, funder, initial_cash, client_id?}: passive wallet
+    #   market_created  — payload {market_id, question, resolve_round, client_id?}: NEVER carries
+    #                     true_prob/outcome (the creator is blind to a market's latent truth)
+    "transfer", "account_created", "market_created",
+    # order_expired — payload {market, order_id}: a GTD order auto-cancelled when its
+    #                 expire_round passed (emitted by the runner's expiry phase, agent_id=None)
+    "order_expired",
     # demo/visualization events (no engine effect; drive the explainer pages):
     #   briefing      — the literal per-round wake-up text fed to a tool-using agent
     #   model_turn    — one raw model turn (text + requested function calls), in call order

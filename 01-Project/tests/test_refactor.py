@@ -170,7 +170,8 @@ def test_recordings_listing(tmp_path):
     s.init(_scripted_cfg(), run_id="2026-01-01_110000"); s.runner.run(5)
 
     web = SimulationSession(runs_dir=tmp_path)
-    assert [x["file"] for x in web.scenarios()] == ["demo.yaml", "demo5.yaml", "llm5_only.yaml"]
+    assert [x["file"] for x in web.scenarios()] == [
+        "demo.yaml", "demo5.yaml", "llm5_only.yaml", "llm5_open.yaml", "llm5_orders.yaml"]
     recs = web.recordings()
     assert [r["file"] for r in recs] == [
         "demo/2026-01-01_110000.jsonl", "demo/2026-01-01_100000.jsonl",   # newest first

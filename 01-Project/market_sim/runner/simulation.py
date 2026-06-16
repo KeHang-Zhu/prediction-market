@@ -7,6 +7,7 @@ resolution consumes no randomness. Bots draw from their own spawned substreams.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,16 +20,19 @@ from market_sim.agents.base import (
     Action,
     Agent,
     Cancel,
+    CreateAccount,
+    CreateMarket,
     DecisionContext,
     Hold,
     HumanAgent,
     MarketView,
     PlaceOrder,
     PortfolioView,
+    Transfer,
 )
 from market_sim.agents.scripted import BOT_REGISTRY
 from market_sim.engine.exchange import Exchange
-from market_sim.engine.models import Account, Market, MarketStatus, Side, Token
+from market_sim.engine.models import Account, Market, MarketStatus, Side, TimeInForce, Token
 from market_sim.engine.settlement import resolve_market
 
 from .config import Config
@@ -101,6 +105,11 @@ class Runner:
                 self.agents[aid] = cls(aid, params)
         self.agent_ids_sorted = sorted(self.agents)
 
+        # --- hand each agent the scenario capability flags (like rng below). Only
+        #     tool-using LLM agents read them, to decide which extra tools to declare. ---
+        for aid in self.agents:
+            self.agents[aid].caps = config.capabilities
+
         # --- seed the one rng + spawn bot substreams (id-sorted, deterministic) ---
         root = np.random.SeedSequence(config.seed)
         children = root.spawn(1 + len(self.agent_ids_sorted))
@@ -166,6 +175,10 @@ class Runner:
             self._publish_news(r)
         # 1b. resolve expiring markets (market-id order), before decisions
         self._resolve_due(r)
+        # 1c. expire GTD orders whose validity has passed (after resolution, so a resolving
+        #     market already cleared its orders). Scripted runs have no GTD orders -> no-op.
+        for mid, oid in self.exchange.expire_due(r):
+            self._emit("order_expired", None, {"market": mid, "order_id": oid})
 
         # 2. freeze the decision snapshot (blind submit). Build every agent's context
         #    up front (all reads, no side effects), then decide. Decisions only READ
@@ -218,8 +231,19 @@ class Runner:
                     payload = {"market": dropped.market, "token": dropped.token.value,
                                "side": dropped.side.value, "price": dropped.price,
                                "qty": dropped.qty, "client_id": cid}
-                else:  # Cancel
+                    self._add_order_type_fields(payload, dropped)
+                elif isinstance(dropped, Cancel):
                     payload = {"order_id": dropped.order_id, "client_id": cid}
+                elif isinstance(dropped, Transfer):
+                    payload = {"to": dropped.to, "amount": dropped.amount, "client_id": cid}
+                elif isinstance(dropped, CreateAccount):
+                    payload = {"account_id": dropped.account_id,
+                               "initial_cash": dropped.initial_cash, "client_id": cid}
+                elif isinstance(dropped, CreateMarket):
+                    payload = {"market_id": dropped.market_id, "question": dropped.question,
+                               "resolve_round": dropped.resolve_round, "client_id": cid}
+                else:
+                    payload = {"client_id": cid}
                 self._emit("invalid_action", aid, payload,
                            {"status": "rejected", "reason": f"dropped (over {cap}/round action cap)"})
 
@@ -371,6 +395,17 @@ class Runner:
                         "qty": p["qty"], "amount": p["amount"],
                     })
 
+    @staticmethod
+    def _add_order_type_fields(d: dict, act: PlaceOrder) -> None:
+        """Add tif/post_only/expire_round to a payload/order dict ONLY when non-default.
+        Plain GTC orders (every scripted bot) add nothing -> byte-identical events."""
+        if act.tif != "GTC":
+            d["tif"] = act.tif
+        if act.post_only:
+            d["post_only"] = True
+        if act.expire_round is not None:
+            d["expire_round"] = act.expire_round
+
     def _execute(self, agent_id: str, act: Action, r: int):
         if isinstance(act, PlaceOrder):
             payload = {"market": act.market, "token": act.token.value, "side": act.side.value,
@@ -379,8 +414,13 @@ class Runner:
             # step it announced earlier (omitted for scripted bots -> byte-exact replay)
             if act.client_id is not None:
                 payload["client_id"] = act.client_id
+            # order-type fields land in the event ONLY when non-default, so plain GTC
+            # scripted orders keep byte-identical payloads (and replay stays byte-exact).
+            self._add_order_type_fields(payload, act)
             res = self.exchange.place_order(agent_id, act.market, act.token, act.side,
-                                            act.price, act.qty, r)
+                                            act.price, act.qty, r,
+                                            tif=TimeInForce(act.tif), post_only=act.post_only,
+                                            expire_round=act.expire_round)
             if res.status == "rejected":
                 self._emit("invalid_action", agent_id, payload, {"status": "rejected", "reason": res.reason})
                 return res
@@ -404,7 +444,88 @@ class Runner:
             self._emit("cancel_order", agent_id, payload,
                        {"status": res.status, "reason": res.reason})
             return res
+        elif isinstance(act, Transfer):
+            return self._exec_transfer(agent_id, act)
+        elif isinstance(act, CreateAccount):
+            return self._exec_create_account(agent_id, act)
+        elif isinstance(act, CreateMarket):
+            return self._exec_create_market(agent_id, act)
         return None  # Hold -> no event
+
+    # --------------------------------------------------- open-scenario actions
+    #
+    # transfer / create_account / create_market settle here in the execution phase
+    # (like orders), so blind-submit holds: an agent's create/transfer is announced at
+    # decide time (order_queued) and only takes effect at round end. Each validates
+    # against LIVE state, rejecting (invalid_action) without mutating on any failure —
+    # the same reject-clean discipline as place_order. Conservation is re-checked by the
+    # round's check_invariants() (or execute_now's, on the console path).
+
+    def _reject(self, agent_id: str, etype: str, payload: dict, reason: str):
+        self._emit("invalid_action", agent_id, payload, {"status": "rejected", "reason": reason})
+        return {"status": "rejected", "reason": reason}
+
+    def _exec_transfer(self, agent_id: str, act: Transfer):
+        payload = {"from": agent_id, "to": act.to, "amount": act.amount}
+        if act.client_id is not None:
+            payload["client_id"] = act.client_id
+        accts = self.exchange.ledger.accounts
+        if act.to not in accts:
+            return self._reject(agent_id, "transfer", payload, "unknown_recipient")
+        if act.to == agent_id:
+            return self._reject(agent_id, "transfer", payload, "self_transfer")
+        if act.amount < 1:
+            return self._reject(agent_id, "transfer", payload, "bad_amount")
+        if act.amount > accts[agent_id].cash_available:
+            return self._reject(agent_id, "transfer", payload, "insufficient_cash")
+        self.exchange.ledger.transfer(agent_id, act.to, act.amount)
+        self._emit("transfer", agent_id, payload, {"status": "ok"})
+        return {"status": "ok"}
+
+    def _exec_create_account(self, agent_id: str, act: CreateAccount):
+        payload = {"account_id": act.account_id, "funder": agent_id,
+                   "initial_cash": act.initial_cash}
+        if act.client_id is not None:
+            payload["client_id"] = act.client_id
+        accts = self.exchange.ledger.accounts
+        if act.account_id in accts:
+            return self._reject(agent_id, "account_created", payload, "account_exists")
+        if act.initial_cash < 0:
+            return self._reject(agent_id, "account_created", payload, "bad_amount")
+        if act.initial_cash > accts[agent_id].cash_available:
+            return self._reject(agent_id, "account_created", payload, "insufficient_cash")
+        self.exchange.create_account(act.account_id, agent_id, act.initial_cash)
+        # register as a PASSIVE wallet: it appears in snapshots (pnl baseline = its
+        # funded amount -> 0) but is NOT added to self.agents / agent_ids_sorted, so it
+        # gets no decision turn, no private signal, and no spawned rng substream.
+        self.agent_types[act.account_id] = "wallet"
+        self.initial_cash[act.account_id] = act.initial_cash
+        self._emit("account_created", agent_id, payload, {"status": "ok"})
+        return {"status": "ok"}
+
+    def _exec_create_market(self, agent_id: str, act: CreateMarket):
+        payload = {"market_id": act.market_id, "question": act.question,
+                   "resolve_round": act.resolve_round}
+        if act.client_id is not None:
+            payload["client_id"] = act.client_id
+        if act.market_id in self.exchange.markets:
+            return self._reject(agent_id, "market_created", payload, "market_exists")
+        if act.resolve_round <= self.round_no:
+            return self._reject(agent_id, "market_created", payload, "resolve_round_in_past")
+        if not str(act.question).strip():
+            return self._reject(agent_id, "market_created", payload, "empty_question")
+        # Sample the latent truth from an ISOLATED rng keyed on (seed, market_id) so we
+        # never consume from self.rng (which would desync the main news/shuffle stream).
+        # A process-stable sha256 hash makes the truth depend only on (seed, market_id),
+        # independent of WHEN in the run the market was created — so it survives resume.
+        sid = int.from_bytes(hashlib.sha256(act.market_id.encode("utf-8")).digest()[:8], "big")
+        mrng = np.random.default_rng(np.random.SeedSequence([int(self.config.seed), sid]))
+        true_prob = float(mrng.random())
+        outcome = 1 if mrng.random() < true_prob else 0
+        self.exchange.create_market(act.market_id, act.question, act.resolve_round, true_prob, outcome)
+        # payload carries NO true_prob/outcome — the creator stays blind to the truth.
+        self._emit("market_created", agent_id, payload, {"status": "ok"})
+        return {"status": "ok"}
 
     def execute_now(self, agent_id: str, act: Action):
         """Execute a human/console action immediately against the current book
@@ -543,8 +664,10 @@ class Runner:
         """One agent-submitted order/cancel as it was queued (blind submit), for the
         clearing trace's decision phase."""
         if isinstance(act, PlaceOrder):
-            return {"client_id": act.client_id, "market": act.market, "token": act.token.value,
-                    "side": act.side.value, "price": act.price, "qty": act.qty}
+            entry = {"client_id": act.client_id, "market": act.market, "token": act.token.value,
+                     "side": act.side.value, "price": act.price, "qty": act.qty}
+            self._add_order_type_fields(entry, act)  # conditional -> GTC trace byte-identical
+            return entry
         return {"kind": "cancel", "client_id": act.client_id, "order_id": act.order_id}
 
     def _act_market(self, act: Action) -> str | None:
@@ -575,6 +698,7 @@ class Runner:
                 return None
             order = {"market": act.market, "token": act.token.value, "side": act.side.value,
                      "price": act.price, "qty": act.qty, "client_id": act.client_id}
+            self._add_order_type_fields(order, act)  # conditional -> GTC trace byte-identical
             if res.status == "rejected":
                 return {"seq": seq, "agent": aid, "kind": "order", "order": order,
                         "book_before": before, "book_after": after, "status": "rejected",

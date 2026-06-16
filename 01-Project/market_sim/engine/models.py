@@ -56,6 +56,19 @@ class MarketStatus(str, Enum):
     RESOLVED = "resolved"
 
 
+class TimeInForce(str, Enum):
+    """How long an order lives / how it executes (Polymarket-style).
+
+    GTC/GTD are LIMIT orders (rest on the book); FOK/FAK are MARKET orders that
+    take immediately. ``limit_price`` is the worst acceptable price (slippage cap)
+    for the market types.
+    """
+    GTC = "GTC"   # good-til-cancelled: rest until filled or cancelled (default)
+    GTD = "GTD"   # good-til-date: rest until ``expire_round``, then auto-cancel
+    FOK = "FOK"   # fill-or-kill: fill the full qty immediately or reject (nothing rests)
+    FAK = "FAK"   # fill-and-kill (IOC): fill what's available now, kill the remainder
+
+
 # --- coordinate transforms (the heart of the single-book mirror trick) ---
 
 def derive_book_side(token: Token, side: Side) -> BookSide:
@@ -83,6 +96,11 @@ class Order:
     status: OrderStatus = OrderStatus.OPEN
     seq_id: int = 0         # monotonic acceptance counter -> time priority
     round_placed: int = 0
+    # time-in-force + modifiers (default GTC -> a plain resting limit order, so
+    # scripted bots that omit these behave exactly as before).
+    tif: TimeInForce = TimeInForce.GTC
+    post_only: bool = False         # GTC/GTD only: reject if it would cross on entry
+    expire_round: int | None = None  # GTD only: last round valid; cancelled after it
 
     @property
     def remaining(self) -> int:

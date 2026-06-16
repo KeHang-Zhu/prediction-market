@@ -40,10 +40,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # The canonical scenarios the UI offers, in display order: a human-interactive
 # scripted demo, the 5-agent agentic-LLM showcase (with mm + noise for liquidity),
-# and a pure-LLM variant where the five agents are the only market participants.
-# Other *.yaml in the project root (e.g. archived experiments) are intentionally
-# NOT offered in the picker.
-SCENARIO_FILES = ("demo.yaml", "demo5.yaml", "llm5_only.yaml")
+# a pure-LLM variant where the five agents are the only market participants, and the
+# "all open" variant of that where the five LLMs also have transfer / create_account /
+# create_market enabled. Other *.yaml in the project root (e.g. archived experiments)
+# are intentionally NOT offered in the picker.
+SCENARIO_FILES = ("demo.yaml", "demo5.yaml", "llm5_only.yaml", "llm5_open.yaml", "llm5_orders.yaml")
 
 
 def _last_round(path: Path) -> int:
@@ -360,11 +361,28 @@ class SimulationSession(Session):
     async def broadcast_playback(self) -> None:
         await self.broadcast(self.playback_state())
 
+    def current_capabilities(self):
+        """The capability flags to advertise to the agent-walkthrough panel: from the live
+        config when one is loaded, else parsed from a loaded recording's config event
+        (replays set self.config=None, but the recorded config still carries the caps)."""
+        if self.config is not None:
+            return self.config.capabilities
+        if self.replay:
+            from market_sim.runner.config import Capabilities
+            for e in self.replay.get("events", ()):
+                if e.get("type") == "config":
+                    caps = ((e.get("payload") or {}).get("config") or {}).get("capabilities")
+                    return Capabilities(**caps) if caps is not None else None
+        return None
+
     async def broadcast_library(self) -> None:
         """Push the scenario + recordings lists (the history picker refreshes so a
-        just-finished run appears without a page reload)."""
+        just-finished run appears without a page reload). Also re-pushes agent_meta so the
+        walkthrough's tool catalogue reflects the loaded scenario/recording's capabilities."""
+        from market_sim.agents.llm_agent import agentic_agent_meta
         await self.broadcast({"type": "library",
-                              "scenarios": self.scenarios(), "recordings": self.recordings()})
+                              "scenarios": self.scenarios(), "recordings": self.recordings(),
+                              "agent_meta": agentic_agent_meta(self.current_capabilities())})
 
     # --- transport controls ---
 

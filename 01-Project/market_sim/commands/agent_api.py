@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import shlex
 
+from market_sim.agents.base import CreateAccount, CreateMarket, Transfer
 from market_sim.engine.models import MarketStatus
 
 from .handlers import (
@@ -71,9 +72,12 @@ def api_get_orderbook(session: Session, market: str, depth: int | None = None, *
 
 
 def api_place_order(session: Session, market: str, side: str, price: int, qty: int,
-                    token: str = "YES", agent: str = "me", **_) -> CommandResult:
+                    token: str = "YES", agent: str = "me", tif: str = "GTC",
+                    order_type: str = None, post_only: bool = False,
+                    expire_round: int | None = None, **_) -> CommandResult:
     res = cmd_order_place(session, agent=agent, market=market, token=token,
-                          side=side, price=price, qty=qty)
+                          side=side, price=price, qty=qty, tif=tif, order_type=order_type,
+                          post_only=post_only, expire_round=expire_round)
     res.verb = "place_order"
     return res
 
@@ -96,18 +100,49 @@ def api_get_trade_history(session: Session, market: str, last: int = 20, **_) ->
     return res
 
 
-# --- stubs (structured not_supported) ---
+# --- open-scenario endpoints (capability-gated; not_supported unless the scenario
+#     enables them via Config.capabilities, so existing scenarios are unchanged) ---
 
-def api_create_account(session: Session, **_) -> CommandResult:
-    return _not_supported("create_account", "accounts are defined in the config at init (V0)")
+def _action_result(session: Session, verb: str, agent: str, action) -> CommandResult:
+    """Submit an open-scenario action through the session's order path (immediate
+    execution on the CLI), and render the engine result as a CommandResult."""
+    res = session.submit_order(agent, action)
+    if isinstance(res, dict) and res.get("status") == "rejected":
+        return CommandResult(False, verb, data=res, error=f"rejected — {res.get('reason')}")
+    return CommandResult(True, verb, data=res if isinstance(res, dict) else {"status": "ok"})
 
 
-def api_create_market(session: Session, **_) -> CommandResult:
-    return _not_supported("create_market", "agent-created markets are a V1 feature")
+def api_create_account(session: Session, account_id: str = None, initial_cash: int = 0,
+                       agent: str = "me", **_) -> CommandResult:
+    runner = session.require_runner()
+    if not runner.config.capabilities.create_account:
+        return _not_supported("create_account", "accounts are defined in the config at init")
+    if not account_id:
+        return CommandResult(False, "create_account", error="create_account requires --account-id")
+    return _action_result(session, "create_account", agent,
+                          CreateAccount(str(account_id), int(initial_cash)))
 
 
-def api_transfer(session: Session, **_) -> CommandResult:
-    return _not_supported("transfer", "inter-agent transfers are a V1 feature")
+def api_create_market(session: Session, market_id: str = None, question: str = "",
+                      resolve_round: int = None, agent: str = "me", **_) -> CommandResult:
+    runner = session.require_runner()
+    if not runner.config.capabilities.create_market:
+        return _not_supported("create_market", "agent-created markets are disabled in this scenario")
+    if not market_id or resolve_round is None:
+        return CommandResult(False, "create_market",
+                             error="create_market requires --market-id and --resolve-round")
+    return _action_result(session, "create_market", agent,
+                          CreateMarket(str(market_id), str(question), int(resolve_round)))
+
+
+def api_transfer(session: Session, to: str = None, amount: int = None,
+                 agent: str = "me", **_) -> CommandResult:
+    runner = session.require_runner()
+    if not runner.config.capabilities.transfer:
+        return _not_supported("transfer", "inter-agent transfers are disabled in this scenario")
+    if to is None or amount is None:
+        return CommandResult(False, "transfer", error="transfer requires --to and --amount")
+    return _action_result(session, "transfer", agent, Transfer(str(to), int(amount)))
 
 
 def api_help(session: Session = None, **_) -> CommandResult:
@@ -116,11 +151,16 @@ def api_help(session: Session = None, **_) -> CommandResult:
         "  get_markets                          list markets with prices & metadata\n"
         "  get_orderbook --market M             full order book for a market\n"
         "  place_order --market M --side buy|sell --price P --qty Q [--token YES|NO] [--agent A]\n"
+        "             [--tif GTC|GTD|FOK|FAK] [--post-only] [--expire-round N]   (FOK/FAK=market; price=worst price)\n"
         "  cancel_order --order-id N [--agent A]\n"
         "  get_portfolio [--agent A]            holdings, open orders, P&L\n"
         "  get_trade_history --market M [--last N]\n"
-        "  create_account / create_market / transfer   (not_supported in V0)\n"
-        "notes: token defaults to YES; agent defaults to 'me' (the demo seat)."
+        "  transfer --to A --amount N                   move cash to another account\n"
+        "  create_account --account-id A --initial-cash N   passive wallet funded from you\n"
+        "  create_market --market-id M --question Q --resolve-round N   open a new market\n"
+        "notes: token defaults to YES; agent defaults to 'me' (the demo seat).\n"
+        "       transfer/create_account/create_market are enabled per-scenario "
+        "(Config.capabilities); they return not_supported when off."
     )
     return CommandResult(True, "help", {}, text)
 
@@ -139,7 +179,8 @@ AGENT_HANDLERS = {
 }
 
 AGENT_PRIMARY = {"get_orderbook": "market", "get_trade_history": "market", "get_portfolio": "agent"}
-_INT_ARGS = {"price", "qty", "last", "order_id", "depth", "amount"}
+_INT_ARGS = {"price", "qty", "last", "order_id", "depth", "amount", "initial_cash",
+             "resolve_round", "expire_round"}
 
 
 def parse_agent_line(line: str) -> tuple[str, dict]:
