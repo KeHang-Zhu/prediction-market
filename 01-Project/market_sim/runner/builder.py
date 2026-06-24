@@ -51,21 +51,83 @@ def build_config(spec: dict) -> Config:
     sig_max = max(sig_min, float(_num(spec, "sigma_max", 0.12)))  # never descending
     temp = float(_num(spec, "temperature", 0.7))
     max_tc = int(_num(spec, "max_tool_calls", 8))
-    model = spec.get("model") or None  # None -> provider falls back to env GEMINI_MODEL
+    model = spec.get("model") or None  # None -> provider falls back to its env default
+    provider = spec.get("provider") or None  # gemini|openai|deepseek|... (else inferred from model)
+    # optional per-agent model list -> different agents run different models in ONE run
+    # (mixed-provider competition). models[i] overrides `model` for agent i (cycled).
+    models = spec.get("models")
+    if models and not isinstance(models, list):
+        models = None
+    thinking = bool(spec.get("thinking", False))            # reasoning mode (DeepSeek v4 etc.)
+    reasoning_effort = spec.get("reasoning_effort") or None  # "low" | "medium" | "high"
     llm_cash = int(_num(spec, "llm_initial_cash", 200_000))
 
-    def sigma(i: int) -> float:
-        if n_llm <= 1:
-            return round(sig_min, 6)
-        return round(sig_min + (sig_max - sig_min) * i / (n_llm - 1), 6)
-
+    # LLM agents. Two ways to specify them:
+    #   1. `llm_groups`: a list of {model, count, thinking, reasoning_effort, [temperature],
+    #      [max_tool_calls], [provider]} — each group expands to `count` agents that share its
+    #      model + reasoning settings. This is the grouped editor: a run can MIX models AND
+    #      give each group its own thinking depth. The signal noise σ is still spread best->worst
+    #      across ALL llm agents (by global index), and temperature/max_tool_calls fall back to
+    #      the global values unless a group overrides them.
+    #   2. otherwise the flat form: `llm_agentic` count + a single `model` (or cycled `models`)
+    #      + global `thinking`/`reasoning_effort`.
+    groups = spec.get("llm_groups")
     agents: list[AgentConfig] = []
-    for i in range(max(0, n_llm)):
-        params: dict = {"signal_sigma": sigma(i), "temperature": temp, "max_tool_calls": max_tc}
-        if model:
-            params["model"] = str(model)
-        agents.append(AgentConfig(id=f"llm{i + 1}", type="llm_agentic",
-                                  initial_cash=llm_cash, params=params))
+
+    if isinstance(groups, list) and groups:
+        flat: list[dict] = []
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            cnt = g.get("count", 1)
+            cnt = int(cnt) if cnt is not None else 1
+            for _ in range(max(0, cnt)):
+                flat.append(g)
+        n_total = len(flat)
+
+        def sigma_g(i: int) -> float:
+            if n_total <= 1:
+                return round(sig_min, 6)
+            return round(sig_min + (sig_max - sig_min) * i / (n_total - 1), 6)
+
+        for i, g in enumerate(flat):
+            gm = g.get("model")
+            gm = gm.strip() if isinstance(gm, str) else gm
+            g_temp = g.get("temperature")
+            g_mtc = g.get("max_tool_calls")
+            params = {"signal_sigma": sigma_g(i),
+                      "temperature": float(g_temp) if g_temp is not None else temp,
+                      "max_tool_calls": int(g_mtc) if g_mtc is not None else max_tc}
+            if gm:
+                params["model"] = str(gm)
+            g_provider = g.get("provider") or provider
+            if g_provider:
+                params["provider"] = str(g_provider)
+            if g.get("thinking"):
+                params["thinking"] = True
+            if g.get("reasoning_effort"):
+                params["reasoning_effort"] = str(g["reasoning_effort"])
+            agents.append(AgentConfig(id=f"llm{i + 1}", type="llm_agentic",
+                                      initial_cash=llm_cash, params=params))
+    else:
+        def sigma(i: int) -> float:
+            if n_llm <= 1:
+                return round(sig_min, 6)
+            return round(sig_min + (sig_max - sig_min) * i / (n_llm - 1), 6)
+
+        for i in range(max(0, n_llm)):
+            params = {"signal_sigma": sigma(i), "temperature": temp, "max_tool_calls": max_tc}
+            a_model = str(models[i % len(models)]) if models else model
+            if a_model:
+                params["model"] = str(a_model)
+            if provider:
+                params["provider"] = str(provider)
+            if thinking:
+                params["thinking"] = True
+            if reasoning_effort:
+                params["reasoning_effort"] = str(reasoning_effort)
+            agents.append(AgentConfig(id=f"llm{i + 1}", type="llm_agentic",
+                                      initial_cash=llm_cash, params=params))
 
     if bool(_num(spec, "include_mm", True)) and int(_num(spec, "mm_count", 2)) > 0:
         agents.append(AgentConfig(

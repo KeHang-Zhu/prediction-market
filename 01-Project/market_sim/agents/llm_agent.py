@@ -222,145 +222,135 @@ def _system_for(caps) -> str:
     return _AGENTIC_SYSTEM + extra
 
 
-def _build_agentic_tools(caps=None):
-    """FunctionDeclarations for the agent API (built lazily — needs google.genai).
+def _tool_spec(name, description, properties=None, required=None):
+    """One OpenAI function-tool dict (the provider-neutral tool format)."""
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object",
+                       "properties": properties or {},
+                       "required": required or []}}}
+
+
+def build_agentic_tool_specs(caps=None):
+    """Provider-neutral tool specs (OpenAI function-tool dicts) for the agent API.
 
     ``caps`` is the scenario's Config.capabilities (or None = all off). The base read +
-    trade tools are always declared; transfer / create_account / create_market are added
-    only when the scenario enables them, so existing scenarios advertise the same toolset."""
-    from google.genai import types
-
-    S, T = types.Schema, types.Type
-
-    def obj(props=None, required=None):
-        return S(type=T.OBJECT, properties=props or {}, required=required or [])
-
-    market = S(type=T.STRING, description="market id, e.g. COIN-A")
+    trade tools are always present; transfer / create_account / create_market are added
+    only when the scenario enables them, so existing scenarios advertise the same toolset.
+    Each provider converts these to its native tool format (Gemini -> FunctionDeclaration;
+    OpenAI-compatible passes them through unchanged)."""
+    market = {"type": "string", "description": "market id, e.g. COIN-A"}
     advanced = caps is not None and getattr(caps, "advanced_orders", False)
-    # place_order has two literal forms: the base limit-only decl (byte-identical to before
-    # for scenarios with advanced_orders off) and an extended decl exposing order types.
+    # place_order has two forms: the base limit-only spec and an extended one exposing
+    # order types (only when advanced_orders is enabled).
     if advanced:
-        place_order_decl = types.FunctionDeclaration(
-            name="place_order",
-            description="Queue an order (settles at round end). Buy NO to bet against YES. "
-                        "order_type: GTC=resting limit (default); GTD=limit that expires after "
-                        "expire_round; FOK=market, fill fully now or cancel; FAK=market, fill "
-                        "what's available now and kill the rest. For market orders set price as "
-                        "your WORST acceptable price (buy high / sell low). post_only (GTC/GTD "
-                        "only) rejects the order if it would trade on entry.",
-            parameters=obj({
-                "market": market,
-                "token": S(type=T.STRING, enum=["YES", "NO"]),
-                "side": S(type=T.STRING, enum=["buy", "sell"]),
-                "price": S(type=T.INTEGER, description="integer cents 1..99 (worst price for market orders)"),
-                "qty": S(type=T.INTEGER, description="positive integer"),
-                "order_type": S(type=T.STRING, enum=["GTC", "GTD", "FOK", "FAK"],
-                                description="time-in-force, optional (default GTC)"),
-                "post_only": S(type=T.BOOLEAN, description="GTC/GTD only: reject if it would cross (optional)"),
-                "expire_round": S(type=T.INTEGER, description="GTD only: last round the order stays live"),
-            }, ["market", "token", "side", "price", "qty"]))
+        place_order = _tool_spec(
+            "place_order",
+            "Queue an order (settles at round end). Buy NO to bet against YES. "
+            "order_type: GTC=resting limit (default); GTD=limit that expires after "
+            "expire_round; FOK=market, fill fully now or cancel; FAK=market, fill "
+            "what's available now and kill the rest. For market orders set price as "
+            "your WORST acceptable price (buy high / sell low). post_only (GTC/GTD "
+            "only) rejects the order if it would trade on entry.",
+            {"market": market,
+             "token": {"type": "string", "enum": ["YES", "NO"]},
+             "side": {"type": "string", "enum": ["buy", "sell"]},
+             "price": {"type": "integer", "description": "integer cents 1..99 (worst price for market orders)"},
+             "qty": {"type": "integer", "description": "positive integer"},
+             "order_type": {"type": "string", "enum": ["GTC", "GTD", "FOK", "FAK"],
+                            "description": "time-in-force, optional (default GTC)"},
+             "post_only": {"type": "boolean", "description": "GTC/GTD only: reject if it would cross (optional)"},
+             "expire_round": {"type": "integer", "description": "GTD only: last round the order stays live"}},
+            ["market", "token", "side", "price", "qty"])
     else:
-        place_order_decl = types.FunctionDeclaration(
-            name="place_order",
-            description="Queue a limit order (settles at round end). Buy NO to bet against YES.",
-            parameters=obj({
-                "market": market,
-                "token": S(type=T.STRING, enum=["YES", "NO"]),
-                "side": S(type=T.STRING, enum=["buy", "sell"]),
-                "price": S(type=T.INTEGER, description="integer cents 1..99 in the token's own coords"),
-                "qty": S(type=T.INTEGER, description="positive integer"),
-            }, ["market", "token", "side", "price", "qty"]))
-    decls = [
-        types.FunctionDeclaration(
-            name="get_markets",
-            description="List all markets with current bid/ask/mid/last/volume and rounds-to-resolution.",
-            parameters=obj()),
-        types.FunctionDeclaration(
-            name="get_orderbook",
-            description="Full bid/ask ladder (YES-price coords) with depth for one market.",
-            parameters=obj({"market": market,
-                            "depth": S(type=T.INTEGER, description="levels per side (optional)")},
-                           ["market"])),
-        types.FunctionDeclaration(
-            name="get_trade_history",
-            description="Recent trades (the public tape) for one market.",
-            parameters=obj({"market": market,
-                            "last": S(type=T.INTEGER, description="how many recent trades (optional)")},
-                           ["market"])),
-        types.FunctionDeclaration(
-            name="get_portfolio",
-            description="Your own cash (available/locked), positions, and open orders.",
-            parameters=obj()),
-        types.FunctionDeclaration(
-            name="get_news",
-            description="Headlines of recent news signals (id + round + market + lean). Noisy but informative.",
-            parameters=obj()),
-        types.FunctionDeclaration(
-            name="get_news_detail",
-            description="Full text + reliability of one news item by id.",
-            parameters=obj({"id": S(type=T.INTEGER)}, ["id"])),
-        place_order_decl,
-        types.FunctionDeclaration(
-            name="cancel_order",
-            description="Cancel one of your open orders by id.",
-            parameters=obj({"order_id": S(type=T.INTEGER)}, ["order_id"])),
-        types.FunctionDeclaration(
-            name="commit_view",
-            description="Commit your read of the markets BEFORE trading: your YES probability "
-                        "per market and a one-line plan for this round. REQUIRED before any "
-                        "place_order / cancel_order — decide what you think, then act on it.",
-            parameters=obj({
-                "beliefs": S(type=T.ARRAY, description="your YES probability per market you have a view on",
-                             items=obj({"market": market,
-                                        "prob": S(type=T.NUMBER, description="probability of YES, 0..1")},
-                                       ["market", "prob"])),
-                "plan": S(type=T.STRING, description="one short line: what you intend to do this round / what to watch"),
-            }, ["beliefs"])),
-        types.FunctionDeclaration(
-            name="finish",
-            description="End your turn AFTER trading: one line on what you LEARNED or CORRECTED "
-                        "this round. Beliefs + plan were already given via commit_view.",
-            parameters=obj({
-                "lessons": S(type=T.STRING, description="one short line: what you LEARNED or CORRECTED this "
-                             "round — a mispricing you spotted, a prior you updated, a rival's habit you noticed"),
-            }, [])),
+        place_order = _tool_spec(
+            "place_order",
+            "Queue a limit order (settles at round end). Buy NO to bet against YES.",
+            {"market": market,
+             "token": {"type": "string", "enum": ["YES", "NO"]},
+             "side": {"type": "string", "enum": ["buy", "sell"]},
+             "price": {"type": "integer", "description": "integer cents 1..99 in the token's own coords"},
+             "qty": {"type": "integer", "description": "positive integer"}},
+            ["market", "token", "side", "price", "qty"])
+    specs = [
+        _tool_spec("get_markets",
+                   "List all markets with current bid/ask/mid/last/volume and rounds-to-resolution."),
+        _tool_spec("get_orderbook",
+                   "Full bid/ask ladder (YES-price coords) with depth for one market.",
+                   {"market": market,
+                    "depth": {"type": "integer", "description": "levels per side (optional)"}},
+                   ["market"]),
+        _tool_spec("get_trade_history",
+                   "Recent trades (the public tape) for one market.",
+                   {"market": market,
+                    "last": {"type": "integer", "description": "how many recent trades (optional)"}},
+                   ["market"]),
+        _tool_spec("get_portfolio",
+                   "Your own cash (available/locked), positions, and open orders."),
+        _tool_spec("get_news",
+                   "Headlines of recent news signals (id + round + market + lean). Noisy but informative."),
+        _tool_spec("get_news_detail",
+                   "Full text + reliability of one news item by id.",
+                   {"id": {"type": "integer"}}, ["id"]),
+        place_order,
+        _tool_spec("cancel_order",
+                   "Cancel one of your open orders by id.",
+                   {"order_id": {"type": "integer"}}, ["order_id"]),
+        _tool_spec("commit_view",
+                   "Commit your read of the markets BEFORE trading: your YES probability "
+                   "per market and a one-line plan for this round. REQUIRED before any "
+                   "place_order / cancel_order — decide what you think, then act on it.",
+                   {"beliefs": {"type": "array",
+                                "description": "your YES probability per market you have a view on",
+                                "items": {"type": "object",
+                                          "properties": {
+                                              "market": market,
+                                              "prob": {"type": "number", "description": "probability of YES, 0..1"}},
+                                          "required": ["market", "prob"]}},
+                    "plan": {"type": "string",
+                             "description": "one short line: what you intend to do this round / what to watch"}},
+                   ["beliefs"]),
+        _tool_spec("finish",
+                   "End your turn AFTER trading: one line on what you LEARNED or CORRECTED "
+                   "this round. Beliefs + plan were already given via commit_view.",
+                   {"lessons": {"type": "string",
+                                "description": "one short line: what you LEARNED or CORRECTED this "
+                                "round — a mispricing you spotted, a prior you updated, a rival's habit you noticed"}},
+                   []),
     ]
     if caps is not None and getattr(caps, "transfer", False):
-        decls.append(types.FunctionDeclaration(
-            name="transfer",
-            description="Move cents of YOUR available cash to ANOTHER existing account "
-                        "(queued, settles at round end like an order).",
-            parameters=obj({
-                "to": S(type=T.STRING, description="recipient account id (must already exist)"),
-                "amount": S(type=T.INTEGER, description="positive integer cents to move"),
-            }, ["to", "amount"])))
+        specs.append(_tool_spec(
+            "transfer",
+            "Move cents of YOUR available cash to ANOTHER existing account "
+            "(queued, settles at round end like an order).",
+            {"to": {"type": "string", "description": "recipient account id (must already exist)"},
+             "amount": {"type": "integer", "description": "positive integer cents to move"}},
+            ["to", "amount"]))
     if caps is not None and getattr(caps, "create_account", False):
-        decls.append(types.FunctionDeclaration(
-            name="create_account",
-            description="Create a NEW passive wallet funded from YOUR available cash. It only "
-                        "holds/forwards cash — it does NOT trade, gets no signal, no turn.",
-            parameters=obj({
-                "account_id": S(type=T.STRING, description="id for the new wallet (must be unused)"),
-                "initial_cash": S(type=T.INTEGER, description="cents to fund it from your cash (>= 0)"),
-            }, ["account_id", "initial_cash"])))
+        specs.append(_tool_spec(
+            "create_account",
+            "Create a NEW passive wallet funded from YOUR available cash. It only "
+            "holds/forwards cash — it does NOT trade, gets no signal, no turn.",
+            {"account_id": {"type": "string", "description": "id for the new wallet (must be unused)"},
+             "initial_cash": {"type": "integer", "description": "cents to fund it from your cash (>= 0)"}},
+            ["account_id", "initial_cash"]))
     if caps is not None and getattr(caps, "create_market", False):
-        decls.append(types.FunctionDeclaration(
-            name="create_market",
-            description="Open a NEW market. The SYSTEM secretly fixes its hidden true probability "
-                        "and outcome — you do NOT choose or see them; you get a private signal on "
-                        "it from next round like any other market.",
-            parameters=obj({
-                "market_id": S(type=T.STRING, description="id for the new market (must be unused)"),
-                "question": S(type=T.STRING, description="the yes/no question the market settles"),
-                "resolve_round": S(type=T.INTEGER, description="round it resolves on (must be > now)"),
-            }, ["market_id", "question", "resolve_round"])))
-    return [types.Tool(function_declarations=decls)]
+        specs.append(_tool_spec(
+            "create_market",
+            "Open a NEW market. The SYSTEM secretly fixes its hidden true probability "
+            "and outcome — you do NOT choose or see them; you get a private signal on "
+            "it from next round like any other market.",
+            {"market_id": {"type": "string", "description": "id for the new market (must be unused)"},
+             "question": {"type": "string", "description": "the yes/no question the market settles"},
+             "resolve_round": {"type": "integer", "description": "round it resolves on (must be > now)"}},
+            ["market_id", "question", "resolve_round"]))
+    return specs
 
 
-# Plain-data mirror of _build_agentic_tools() for the single-round walkthrough demo.
+# Plain-data mirror of build_agentic_tool_specs() for the single-round walkthrough demo.
 # Sent in `hello` so the page can show EXACTLY which tools the model may call and what
-# each does — without importing google.genai. Ordered by the round's usage flow
-# (read → commit_view → trade → finish). Keep in sync with _build_agentic_tools.
+# each does, with curated kind/signature. Ordered by the round's usage flow
+# (read → commit_view → trade → finish). Keep in sync with build_agentic_tool_specs.
 AGENTIC_TOOLS_DISPLAY = [
     {"name": "get_markets", "kind": "read", "signature": "()",
      "description": "List all markets with current bid/ask/mid/last/volume and rounds-to-resolution."},
@@ -387,7 +377,7 @@ AGENTIC_TOOLS_DISPLAY = [
 
 # Plain-data display rows for the capability-gated open-scenario tools — appended to the
 # walkthrough catalogue only when the active scenario enables them (keep in sync with the
-# FunctionDeclarations in _build_agentic_tools). All are "action" kind.
+# specs in build_agentic_tool_specs). All are "action" kind.
 _CAPS_TOOLS_DISPLAY = {
     "transfer": {"name": "transfer", "kind": "action", "signature": "(to, amount)",
                  "description": "Move cents of YOUR available cash to another existing account "
@@ -431,12 +421,17 @@ class ToolLoopAgent(Agent):
     def __init__(self, agent_id: str, params: dict | None = None) -> None:
         super().__init__(agent_id, params)
         p = self.params or {}
-        self.model = p.get("model")
+        self.model = p.get("model")                       # None -> provider's env default
+        self.provider = p.get("provider")                 # "gemini"|"openai"|"deepseek"|... or None
         self.temperature = float(p.get("temperature", 0.7))
         self.max_tool_calls = int(p.get("max_tool_calls", 8))  # model calls per round
+        # reasoning / "thinking" mode for OpenAI-compatible providers (e.g. DeepSeek v4).
+        self.thinking = bool(p.get("thinking", False))
+        self.reasoning_effort = p.get("reasoning_effort")
+        self.max_output_tokens = int(p.get("max_output_tokens", 0)) or None
         self._provider = None
         self._tools = None
-        self.contents: list = []   # the persistent cross-round conversation
+        self.contents: list = []   # the persistent cross-round conversation (provider-neutral dicts)
 
     # ``contents`` (the conversation memory) pickles fine; the genai client/tools do
     # not, so drop them — they are rebuilt lazily. This lets a run be saved + resumed
@@ -454,19 +449,23 @@ class ToolLoopAgent(Agent):
 
     def _get_provider(self):
         if self._provider is None:
-            from market_sim.eval.provider import GeminiProvider
-            # a 0.25s beat BETWEEN successive tool-call turns smooths the request rate;
-            # extra retries with exponential backoff still ride out any transient 429s.
-            # thinking_level="low" keeps light reasoning on; the empty-content guard +
-            # finish-nudge below still protect against a thinking turn that emits no call.
-            self._provider = GeminiProvider(model=self.model, temperature=self.temperature,
-                                            use_cache=False, max_retries=5, pace=0.25,
-                                            thinking_level="low")
+            from market_sim.eval.providers import get_provider
+            # Pick the provider for this agent (mixed-per-run): explicit self.provider wins,
+            # else inferred from self.model's name (deepseek*/gpt*/gemini*). One provider is
+            # chosen once and kept for the whole run — that is what makes the Gemini _native
+            # (thought_signature) scheme safe. A 0.25s beat BETWEEN successive tool-call turns
+            # smooths the request rate; retries with exponential backoff ride out transient 429s.
+            self._provider = get_provider(self.model, self.provider,
+                                          temperature=self.temperature, use_cache=False,
+                                          max_retries=5, pace=0.25,
+                                          thinking=self.thinking,
+                                          reasoning_effort=self.reasoning_effort,
+                                          max_output_tokens=self.max_output_tokens)
         return self._provider
 
-    def _tools_decls(self):
+    def _tool_specs(self):
         if self._tools is None:
-            self._tools = _build_agentic_tools(self.caps)
+            self._tools = build_agentic_tool_specs(self.caps)
         return self._tools
 
     # --- per-round wake-up briefing (minimal: cash/positions + open market ids only;
@@ -521,19 +520,16 @@ class ToolLoopAgent(Agent):
     # --- the round ---
 
     def decide(self, ctx: DecisionContext) -> list[Action]:
-        from google.genai import types
-
         self.last_call = None
         briefing = self._wake_briefing(ctx)
         # announce the literal briefing the model is about to get (system→model input),
         # at the very start of the turn — the walkthrough demo replays this verbatim.
         if ctx.on_briefing:
             ctx.on_briefing(briefing)
-        self.contents.append(types.Content(
-            role="user", parts=[types.Part(text=briefing)]))
+        self.contents.append({"role": "user", "text": briefing})
 
         provider = self._get_provider()
-        tools = self._tools_decls()
+        tools = self._tool_specs()
         pending: list[Action] = []
         summary: list[str] = []
         finished = False
@@ -554,31 +550,32 @@ class ToolLoopAgent(Agent):
             # announce the raw model output (text + requested calls) the instant it
             # returns — the verbatim model→system side, BEFORE the calls' results.
             if ctx.on_model_turn:
+                # strip the synthesized tool_call id so the model_turn event payload stays
+                # exactly {"name","args"} per call (recorded runs remain byte-identical).
                 ctx.on_model_turn({"turn": turn_index, "text": turn.get("text") or "",
-                                   "calls": turn.get("function_calls") or [],
+                                   "calls": [{"name": c["name"], "args": c["args"]}
+                                             for c in (turn.get("function_calls") or [])],
                                    "error": turn.get("error")})
             if turn["error"] is not None:
                 # keep the conversation well-formed (alternating) so next round is valid
-                self.contents.append(types.Content(role="model",
-                                                   parts=[types.Part(text="(no response)")]))
+                self.contents.append({"role": "assistant", "text": "(no response)",
+                                      "tool_calls": [], "_native": None})
                 self.last_call = {"belief": view_belief, "rationale": view_plan, "ok": False,
                                   "error": turn["error"][:200],
                                   "api_error": turn["api_error"], "round": ctx.round,
                                   "retries": total_retries, "backoff_s": round(total_backoff, 1)}
                 return pending or [Hold()]
 
-            # Append the model's reply VERBATIM when it has content (it carries the
-            # thought_signature, which a hand-rebuilt Part would lose). Some models
-            # occasionally return a Content with NO parts; appending that poisons the
-            # persistent conversation — every later request then fails with
-            # "400 must include at least one parts field". Substitute a minimal text
-            # part in that case so the conversation stays well-formed.
-            c = turn["content"]
-            if c is not None and getattr(c, "parts", None):
-                self.contents.append(c)
+            # Append the model's reply (the neutral assistant dict). For Gemini it carries
+            # the native Content under `_native`, re-sent VERBATIM next turn so the
+            # thought_signature is preserved; the provider already substitutes a text turn
+            # for an empty/no-parts reply so the persistent conversation stays well-formed.
+            assistant = turn["assistant"]
+            if assistant is not None:
+                self.contents.append(assistant)
             else:
-                self.contents.append(types.Content(
-                    role="model", parts=[types.Part(text=turn["text"] or "(no content)")]))
+                self.contents.append({"role": "assistant", "text": turn["text"] or "(no content)",
+                                      "tool_calls": [], "_native": None})
 
             calls = turn["function_calls"]
             if not calls:
@@ -587,9 +584,9 @@ class ToolLoopAgent(Agent):
                 # nudge it once to finish; only give up if it still won't.
                 if not nudged:
                     nudged = True
-                    self.contents.append(types.Content(role="user", parts=[types.Part(
-                        text="End your turn by calling finish(lessons) to record what you "
-                             "learned — even if you placed no orders this round.")]))
+                    self.contents.append({"role": "user", "text":
+                        "End your turn by calling finish(lessons) to record what you "
+                        "learned — even if you placed no orders this round."})
                     continue
                 self.last_call = {"belief": view_belief, "rationale": view_plan,
                                   "lessons": (turn["text"] or "(ended without finish)")[:300],
@@ -598,7 +595,7 @@ class ToolLoopAgent(Agent):
 
             responses = []
             for fc in calls:
-                name, fa = fc["name"], fc["args"]
+                name, fa, tc_id = fc["name"], fc["args"], fc.get("id", "")
                 if name in _READ_VERBS:
                     result = ctx.query(name, fa) if ctx.query else {"error": "no query interface"}
                 elif name == "commit_view":
@@ -714,10 +711,10 @@ class ToolLoopAgent(Agent):
                     finished = True
                 else:
                     result = {"error": f"unknown tool '{name}'"}
-                responses.append(types.Part(function_response=types.FunctionResponse(
-                    name=name, response=result if isinstance(result, dict) else {"value": result})))
+                responses.append({"role": "tool", "tool_call_id": tc_id, "name": name,
+                                  "result": result if isinstance(result, dict) else {"value": result}})
 
-            self.contents.append(types.Content(role="user", parts=responses))
+            self.contents.extend(responses)
             if finished:
                 break
 

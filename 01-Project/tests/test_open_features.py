@@ -218,8 +218,6 @@ def test_llm_tool_loop_queues_and_settles_new_actions(tmp_path):
     """Drive a real ToolLoopAgent with a fake provider that calls the new tools, then
     step the runner — proving the blind-submit queue -> execution-phase settle -> event
     path fires end-to-end, deterministically and with no Gemini call."""
-    from google.genai import types
-
     cfg = Config(
         seed=7, rounds=10, max_actions_per_agent=16,
         markets=[MarketConfig(id="COIN-A", true_prob=0.6, resolve_round=10**9)],
@@ -235,20 +233,22 @@ def test_llm_tool_loop_queues_and_settles_new_actions(tmp_path):
     assert r.agents["llm1"].caps.transfer   # runner handed the agent its capabilities
 
     class FakeProvider:
-        def tool_turn(self, contents, tools, system, temperature):
+        def tool_turn(self, messages, tools, *, system, temperature=None):
+            calls = [
+                {"id": "c0", "name": "commit_view",
+                 "args": {"beliefs": [{"market": "COIN-A", "prob": 0.6}], "plan": "p"}},
+                {"id": "c1", "name": "transfer", "args": {"to": "me", "amount": 1000}},
+                {"id": "c2", "name": "create_account", "args": {"account_id": "w1", "initial_cash": 2000}},
+                {"id": "c3", "name": "create_market",
+                 "args": {"market_id": "AGENT-M", "question": "Q?", "resolve_round": 50}},
+                {"id": "c4", "name": "finish", "args": {"lessons": "done"}},
+            ]
             return {
-                "error": None, "api_error": None,
-                "content": types.Content(role="model", parts=[types.Part(text="ok")]),
+                "error": None, "api_error": False,
+                "assistant": {"role": "assistant", "text": "ok",
+                              "tool_calls": calls, "_native": None},
                 "text": "",
-                "function_calls": [
-                    {"name": "commit_view",
-                     "args": {"beliefs": [{"market": "COIN-A", "prob": 0.6}], "plan": "p"}},
-                    {"name": "transfer", "args": {"to": "me", "amount": 1000}},
-                    {"name": "create_account", "args": {"account_id": "w1", "initial_cash": 2000}},
-                    {"name": "create_market",
-                     "args": {"market_id": "AGENT-M", "question": "Q?", "resolve_round": 50}},
-                    {"name": "finish", "args": {"lessons": "done"}},
-                ],
+                "function_calls": calls,
                 "retries": 0, "backoff_s": 0.0,
             }
 

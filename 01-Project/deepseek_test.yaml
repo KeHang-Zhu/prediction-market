@@ -1,0 +1,47 @@
+# DeepSeek v4-flash (thinking mode) smoke scenario — two informed LLM traders with private,
+# decaying signals + a market-maker/noise liquidity backbone. Run OFFLINE (CLI) and replay
+# in the browser. Needs DEEPSEEK_API_KEY in .env.
+seed: 42
+rounds: 5
+max_actions_per_agent: 12
+run_name: deepseek_test
+
+markets:
+  - id: COIN-A
+    question: "Will coin A land heads? (bias unknown)"
+    true_prob: 0.65
+    resolve_round: 999
+  - id: COIN-B
+    question: "Will coin B land heads?"
+    true_prob: 0.40
+    resolve_round: 999
+
+agents:
+  - id: llm1
+    type: llm_agentic
+    initial_cash: 200000
+    params: { provider: deepseek, model: deepseek-v4-flash, thinking: true,
+              reasoning_effort: low, max_output_tokens: 6000,
+              signal_sigma: 0.05, temperature: 0.7, max_tool_calls: 8 }
+  - id: llm2
+    type: llm_agentic
+    initial_cash: 200000
+    params: { provider: deepseek, model: deepseek-v4-flash, thinking: true,
+              reasoning_effort: low, max_output_tokens: 6000,
+              signal_sigma: 0.09, temperature: 0.7, max_tool_calls: 8 }
+  - id: mm
+    type: mm
+    count: 2
+    initial_cash: 500000
+    params: { spread: 3, size: 15 }
+  - id: noise
+    type: noise
+    count: 1
+    initial_cash: 200000
+    params: { q: 0.5, w: 8, max_qty: 10 }
+
+news:
+  enabled: true
+  mode: prob
+  sigma_decay: 0.8
+  disclose_sigma: true

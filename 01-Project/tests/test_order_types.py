@@ -150,11 +150,10 @@ def test_scripted_run_emits_no_new_order_fields(tmp_path):
 
 
 def _place_params(caps) -> set:
-    from market_sim.agents.llm_agent import _build_agentic_tools
-    for t in _build_agentic_tools(caps):
-        for fd in t.function_declarations:
-            if fd.name == "place_order":
-                return set((fd.parameters.properties or {}).keys())
+    from market_sim.agents.llm_agent import build_agentic_tool_specs
+    for t in build_agentic_tool_specs(caps):
+        if t["function"]["name"] == "place_order":
+            return set((t["function"]["parameters"]["properties"] or {}).keys())
     return set()
 
 
