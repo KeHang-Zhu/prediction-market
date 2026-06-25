@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from market_sim.web.app import app, session
+from market_sim.server.app import app, session
 
 
 def _recv_until(ws, pred, limit=40):

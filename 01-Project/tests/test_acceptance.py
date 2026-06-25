@@ -10,7 +10,7 @@ from market_sim.runner.replay import verify_replay
 from market_sim.runner.simulation import Runner
 from market_sim.runner.sinks import FanoutSink, JsonlEventSink, ListSink
 
-DEMO = Path(__file__).resolve().parent.parent / "demo.yaml"
+DEMO = Path(__file__).resolve().parent.parent / "scenarios" / "demo.yaml"
 
 
 def _pnl(snap, aid):

@@ -3,14 +3,14 @@
 
 PY := ./.venv/bin/python
 PIP := ./.venv/bin/pip
-FRONTEND := market_sim/web/frontend
+FRONTEND := web
 
 .PHONY: help setup setup-py setup-web build-web web serve dev-api dev-ui demo test clean
 
 help:
 	@echo "targets:"
 	@echo "  setup      create venv, install Python + frontend deps"
-	@echo "  build-web  build the browser UI into market_sim/web/static"
+	@echo "  build-web  build the browser UI into market_sim/server/static"
 	@echo "  web        build the UI and serve the app (http://127.0.0.1:8000)"
 	@echo "  serve      serve the app without rebuilding the UI"
 	@echo "  dev-api    run the backend only (for frontend dev with hot reload)"
@@ -35,16 +35,16 @@ build-web:
 web: build-web serve
 
 serve:
-	$(PY) -m market_sim.web
+	$(PY) -m market_sim.server
 
 dev-api:
-	$(PY) -m market_sim.web
+	$(PY) -m market_sim.server
 
 dev-ui:
 	cd $(FRONTEND) && npm run dev
 
 demo:
-	$(PY) -m market_sim.cli.main init --config demo.yaml
+	$(PY) -m market_sim.cli.main init --config scenarios/demo.yaml
 	$(PY) -m market_sim.cli.main run --rounds 200
 	$(PY) -m market_sim.cli.main status
 	$(PY) -m market_sim.cli.main replay --log runs/demo.jsonl
@@ -55,5 +55,5 @@ test:
 	$(PY) -m pytest
 
 clean:
-	rm -rf .venv $(FRONTEND)/node_modules market_sim/web/static runs *.session.pkl
+	rm -rf .venv $(FRONTEND)/node_modules market_sim/server/static runs *.session.pkl
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

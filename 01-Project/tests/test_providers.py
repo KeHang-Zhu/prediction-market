@@ -49,7 +49,7 @@ def test_tool_specs_capability_gating_matches_caps():
 
 def test_gemini_tool_conversion_preserves_names_and_required():
     pytest.importorskip("google.genai")
-    from market_sim.eval.providers.gemini import tool_specs_to_gemini
+    from market_sim.llm.gemini import tool_specs_to_gemini
     tools = tool_specs_to_gemini(build_agentic_tool_specs(None))
     fds = tools[0].function_declarations
     names = {f.name for f in fds}
@@ -64,7 +64,7 @@ def test_gemini_tool_conversion_preserves_names_and_required():
 # --------------------------------------------------------------------------- factory
 
 def test_get_provider_selection():
-    from market_sim.eval.providers import GeminiProvider, OpenAIProvider, get_provider
+    from market_sim.llm import GeminiProvider, OpenAIProvider, get_provider
     assert isinstance(get_provider("gemini-3.5-flash"), GeminiProvider)
     assert isinstance(get_provider("deepseek-v4-pro"), OpenAIProvider)
     assert isinstance(get_provider("gpt-4o"), OpenAIProvider)
@@ -99,7 +99,7 @@ def _resp(content, tool_calls):
 
 
 def test_openai_tool_turn_parses_tool_calls():
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     tc = SimpleNamespace(id="call_x", function=SimpleNamespace(
         name="place_order", arguments='{"market":"COIN-A","price":45}'))
     p = OpenAIProvider(model="deepseek-v4-pro", pace=0)
@@ -116,7 +116,7 @@ def test_openai_tool_turn_parses_tool_calls():
 
 
 def test_openai_tool_turn_no_tool_calls():
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     p = OpenAIProvider(model="gpt-4o", pace=0)
     p._client = _FakeClient(_resp("just text", None))
     out = p.tool_turn([{"role": "user", "text": "hi"}], build_agentic_tool_specs(None), system="s")
@@ -125,7 +125,7 @@ def test_openai_tool_turn_no_tool_calls():
 
 
 def test_openai_message_translation_and_reasoning_flags():
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     p = OpenAIProvider(model="deepseek-reasoner", pace=0)
     msgs = p._to_messages("SYS", [
         {"role": "user", "text": "u"},
@@ -144,7 +144,7 @@ def test_openai_message_translation_and_reasoning_flags():
 def test_openai_empty_assistant_message_gets_placeholder_content():
     # a thinking-only turn (empty text, no tool_calls) must still serialize with content,
     # else DeepSeek/OpenAI 400 with "content or tool_calls must be set".
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     p = OpenAIProvider(model="deepseek-v4-flash", thinking=True, pace=0)
     msgs = p._to_messages("S", [{"role": "assistant", "text": "", "tool_calls": [], "_native": None}])
     assistant = msgs[1]
@@ -152,7 +152,7 @@ def test_openai_empty_assistant_message_gets_placeholder_content():
 
 
 def test_openai_thinking_request_shape():
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     tc = SimpleNamespace(id="c1", function=SimpleNamespace(name="finish", arguments="{}"))
     p = OpenAIProvider(model="deepseek-v4-flash", thinking=True, reasoning_effort="low", pace=0)
     p._client = _FakeClient(_resp("", [tc]))
@@ -166,7 +166,7 @@ def test_openai_thinking_request_shape():
 def test_openai_thinking_ignored_for_non_reasoning_model():
     # mixed run: thinking is ON globally, but a plain chat model (gpt-4o) must NOT receive
     # DeepSeek's extra_body / reasoning_effort (it would 400) and should keep its temperature.
-    from market_sim.eval.providers.openai_compat import OpenAIProvider
+    from market_sim.llm.openai_compat import OpenAIProvider
     tc = SimpleNamespace(id="c1", function=SimpleNamespace(name="finish", arguments="{}"))
     p = OpenAIProvider(model="gpt-4o", thinking=True, reasoning_effort="low", pace=0)
     p._client = _FakeClient(_resp("", [tc]))
@@ -177,7 +177,7 @@ def test_openai_thinking_ignored_for_non_reasoning_model():
 
 
 def test_openai_transient_classification():
-    from market_sim.eval.providers.openai_compat import _openai_transient
+    from market_sim.llm.openai_compat import _openai_transient
     assert _openai_transient(Exception("429 Too Many Requests")) is True
     assert _openai_transient(Exception("Connection reset by peer")) is True
     assert _openai_transient(Exception("invalid api key")) is False
@@ -248,7 +248,7 @@ class _ScriptedProvider:
 
 
 def test_agentic_loop_is_provider_neutral(monkeypatch):
-    import market_sim.eval.providers as providers_pkg
+    import market_sim.llm as providers_pkg
     from market_sim.runner.simulation import Runner
     from market_sim.runner.sinks import ListSink
 

@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# secrets / local config
+.env
+
+# regenerable on-disk LLM-response cache (keep curated scorecards under eval_runs/)
+eval_runs/cache/

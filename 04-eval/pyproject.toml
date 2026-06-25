@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gms-eval"
+version = "0.1.0"
+description = "Offline LLM trading-behaviour rationality eval for Generative Market Simulation."
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = [
+    "generative-market-simulation",
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.6",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gms_eval"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

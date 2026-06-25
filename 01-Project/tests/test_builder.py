@@ -85,7 +85,7 @@ def test_no_human_scripted_config_runs():
 
 
 def test_session_save_template(tmp_path, monkeypatch):
-    import market_sim.web.session as sess_mod
+    import market_sim.server.session as sess_mod
     monkeypatch.setattr(sess_mod, "_PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(sess_mod, "_TEMPLATES_DIR", tmp_path / "templates")
     s = sess_mod.SimulationSession(runs_dir=tmp_path / "runs")

@@ -10,7 +10,7 @@ from __future__ import annotations
 from market_sim.engine.models import Side, Token
 
 from .base import Action, Agent, Cancel, DecisionContext, Hold, PlaceOrder
-from .llm_agent import LLMAgent, ToolLoopAgent  # lazy-import the Gemini provider only when used
+from .llm_agent import ToolLoopAgent  # lazy-imports the model provider only when used
 
 
 def _clamp(x: int, lo: int = 1, hi: int = 99) -> int:
@@ -130,6 +130,5 @@ BOT_REGISTRY = {
     "mm": NaiveMM,
     "zic": ZIC,
     "fundamentalist": Fundamentalist,
-    "llm": LLMAgent,
     "llm_agentic": ToolLoopAgent,
 }

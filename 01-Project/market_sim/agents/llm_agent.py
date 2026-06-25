@@ -1,13 +1,14 @@
-"""LLM trading agent — plugs into the runner loop via the Agent protocol.
+"""Agentic LLM trader — plugs into the runner loop via the Agent protocol.
 
-It builds the same observation the eval harness uses (ground-truth probability is
-NOT included), calls the model for a forced-JSON decision, and converts the result
-into engine actions. The Gemini provider is lazy-imported so non-LLM runs don't need
-the [eval] deps; on any model / parse / rate-limit failure the agent simply holds
-that round and records the error in ``last_call`` for the UI.
+``ToolLoopAgent`` is a persistent, tool-using trader: it holds one conversation across the
+whole run and drives a manual function-calling loop over the read-only agent API, queuing
+its orders for end-of-round settlement (blind submit preserved). The model provider is
+chosen per agent (Gemini / OpenAI-compatible) and lazy-imported so non-LLM runs don't need
+the [llm] deps; on any model / parse / rate-limit failure the agent simply holds that round
+and records the error in ``last_call`` for the UI.
 
-Because every decision is a real (slow, rate-limited) model call, the web UI runs
-LLM scenarios in single-step mode only.
+Because every decision is a real (slow, rate-limited) model call, the web UI runs LLM
+scenarios in single-step mode only.
 """
 
 from __future__ import annotations
@@ -27,109 +28,6 @@ from .base import (
     PlaceOrder,
     Transfer,
 )
-
-
-class LLMAgent(Agent):
-    is_human = False
-
-    def __init__(self, agent_id: str, params: dict | None = None) -> None:
-        super().__init__(agent_id, params)
-        p = self.params or {}
-        self.model = p.get("model")                       # None -> env GEMINI_MODEL
-        self.temperature = float(p.get("temperature", 0.7))
-        self.max_recent = int(p.get("recent", 5))
-        self._provider = None
-        self._recent: list[str] = []
-
-    # the genai client isn't picklable; drop it so the run state can be saved/resumed
-    # (it is recreated lazily on the next call).
-    def __getstate__(self) -> dict:
-        d = self.__dict__.copy()
-        d["_provider"] = None
-        return d
-
-    def __setstate__(self, state: dict) -> None:
-        self.__dict__.update(state)
-        self._provider = None
-
-    def _get_provider(self):
-        if self._provider is None:
-            from market_sim.eval.provider import GeminiProvider
-            # a 0.25s beat between calls smooths request rate; retries ride out 429s.
-            # thinking_level="low" keeps a little reasoning on (better decisions) while
-            # staying fast enough to reliably emit the function call.
-            self._provider = GeminiProvider(model=self.model, temperature=self.temperature,
-                                            use_cache=True, max_retries=5, pace=0.25,
-                                            thinking_level="low")
-        return self._provider
-
-    def _observation(self, ctx: DecisionContext) -> dict:
-        pf = ctx.portfolio
-        markets = []
-        for mid, mv in ctx.markets.items():
-            if mv.status != "open":
-                continue
-            markets.append({
-                "id": mid, "question": mv.question,
-                "best_bid": mv.best_bid, "best_ask": mv.best_ask,
-                "last_trade": mv.last_trade, "depth": mv.depth,
-                "resolves_in_rounds": mv.resolves_in,
-            })
-        return {
-            "round": ctx.round,
-            "you": {
-                "cash_available": pf.cash_available, "cash_locked": pf.cash_locked,
-                "positions": {k: v for k, v in pf.positions.items() if any(v.values())},
-                "open_orders": pf.open_orders,
-            },
-            "markets": markets,
-            "news": [n.get("text", "") for n in ctx.news],
-            "your_recent_actions": list(self._recent),
-        }
-
-    def decide(self, ctx: DecisionContext) -> list[Action]:
-        obs = self._observation(ctx)
-        user = (
-            "Here is your current observation (JSON):\n"
-            + json.dumps(obs, ensure_ascii=False, indent=2)
-            + "\n\nReturn your decision as the required JSON object (beliefs, rationale, actions)."
-        )
-        try:
-            comp = self._get_provider().complete(user, key=f"live:{self.agent_id}")
-        except Exception as e:  # noqa: BLE001 — missing deps / creds -> hold, surface error
-            self.last_call = {"belief": {}, "rationale": "", "ok": False,
-                              "error": str(e)[:200], "round": ctx.round}
-            return [Hold()]
-
-        if not comp.ok or comp.parsed is None:
-            self.last_call = {"belief": {}, "rationale": "", "ok": False,
-                              "error": (comp.error or "no response")[:200],
-                              "api_error": comp.api_error, "round": ctx.round}
-            return [Hold()]
-
-        resp = comp.parsed
-        self.last_call = {
-            "belief": {b.market: round(b.prob, 3) for b in resp.beliefs},
-            "rationale": (resp.rationale or "")[:300],
-            "ok": True, "attempts": comp.attempts, "round": ctx.round,
-        }
-
-        actions: list[Action] = []
-        summary: list[str] = []
-        for a in resp.actions:
-            if (a.type == "place_order" and a.market and a.token in ("YES", "NO")
-                    and a.side in ("buy", "sell") and a.price and a.qty):
-                actions.append(PlaceOrder(a.market, Token(a.token), Side(a.side), int(a.price), int(a.qty)))
-                summary.append(f"{a.side} {a.token}@{a.price}x{a.qty} {a.market}")
-            elif a.type == "cancel_order" and a.order_id is not None:
-                actions.append(Cancel(int(a.order_id)))
-                summary.append(f"cancel #{a.order_id}")
-            elif a.type == "hold":
-                summary.append("hold")
-
-        self._recent.append(f"r{ctx.round}: " + ("; ".join(summary) if summary else "hold"))
-        self._recent = self._recent[-self.max_recent:]
-        return actions or [Hold()]
 
 
 # ===========================================================================
@@ -449,7 +347,7 @@ class ToolLoopAgent(Agent):
 
     def _get_provider(self):
         if self._provider is None:
-            from market_sim.eval.providers import get_provider
+            from market_sim.llm import get_provider
             # Pick the provider for this agent (mixed-per-run): explicit self.provider wins,
             # else inferred from self.model's name (deepseek*/gpt*/gemini*). One provider is
             # chosen once and kept for the whole run — that is what makes the Gemini _native

@@ -14,8 +14,11 @@ __pycache__/
 
 # node / frontend
 node_modules/
-market_sim/web/frontend/node_modules/
-market_sim/web/static/
+web/node_modules/
+market_sim/server/static/
+
+# user-built scenario templates (from the web builder) — keep the dir, ignore its output
+scenarios/templates/*.yaml
 
 # OS
 .DS_Store

@@ -22,7 +22,7 @@ from market_sim.engine.models import Side, Token
 from market_sim.runner.config import AgentConfig, Config, MarketConfig
 from market_sim.runner.simulation import Runner
 from market_sim.runner.sinks import ListSink
-from market_sim.web.session import REPLAY_MAX_GAP, SimulationSession
+from market_sim.server.session import REPLAY_MAX_GAP, SimulationSession
 
 
 # --------------------------------------------------------------------------- helpers
@@ -170,7 +170,9 @@ def test_recordings_listing(tmp_path):
     s.init(_scripted_cfg(), run_id="2026-01-01_110000"); s.runner.run(5)
 
     web = SimulationSession(runs_dir=tmp_path)
-    assert [x["file"] for x in web.scenarios()] == [
+    # built-in scenarios in display order (user templates, if any exist on disk, are listed
+    # separately with builtin=False and aren't asserted here).
+    assert [x["file"] for x in web.scenarios() if x["builtin"]] == [
         "demo.yaml", "demo5.yaml", "llm5_only.yaml", "llm5_open.yaml", "llm5_orders.yaml"]
     recs = web.recordings()
     assert [r["file"] for r in recs] == [
@@ -371,7 +373,7 @@ def test_llm_autorun_stops_at_horizon(tmp_path, monkeypatch):
     monkeypatch.setitem(scripted.BOT_REGISTRY, "llm_agentic", StubLLM)
     # live LLM rounds reveal cinematically (one event at a time); drop the per-event
     # floor so the stub run drips instantly here instead of pacing at ~0.15s/event.
-    monkeypatch.setattr("market_sim.web.session.REPLAY_MIN_GAP", 0.0)
+    monkeypatch.setattr("market_sim.server.session.REPLAY_MIN_GAP", 0.0)
 
     async def go():
         web = SimulationSession(runs_dir=tmp_path)
@@ -392,7 +394,7 @@ def test_live_llm_reveals_events_one_at_a_time(tmp_path, monkeypatch):
     whole round in a single batch — so each agent's tool calls appear individually."""
     import market_sim.agents.scripted as scripted
     monkeypatch.setitem(scripted.BOT_REGISTRY, "llm_agentic", StubLLM)
-    monkeypatch.setattr("market_sim.web.session.REPLAY_MIN_GAP", 0.0)  # instant in test
+    monkeypatch.setattr("market_sim.server.session.REPLAY_MIN_GAP", 0.0)  # instant in test
 
     class FakeWS:
         def __init__(self):

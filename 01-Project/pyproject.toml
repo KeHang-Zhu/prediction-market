@@ -3,10 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "market-sim"
+name = "generative-market-simulation"
 version = "0.1.0"
-description = "Generative Market Simulation V0 — prediction-market engine, CLI, and browser visualization"
+description = "Generative Market Simulation — a prediction-market engine, CLI, and LLM-agent simulation."
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.6",
@@ -27,7 +28,7 @@ dev = [
     "hypothesis>=6.100",
     "httpx>=0.27",
 ]
-eval = [
+llm = [
     "google-genai>=1.0.0",
     "openai>=1.40.0",
     "python-dotenv>=1.0.0",
