@@ -1,8 +1,8 @@
 # Generative Market Simulation
 
 A reproducible, event-sourced **prediction-market engine** faithful to Polymarket's
-contract semantics, together with **tool-using LLM traders** and an offline evaluation of
-their trading-behavior rationality.
+contract semantics, together with **tool-using LLM traders** and a standalone package that
+evaluates their trading-behavior rationality.
 
 > **🔗 Live demo (no install):** https://gmsdemo-mocha.vercel.app/
 >
@@ -15,10 +15,11 @@ their trading-behavior rationality.
 
 | Folder | What it is |
 |---|---|
-| **`00-Slide/`** | Progress-update slide decks (`Jun9_GMS_V0_Update.pdf`, `Jun12_GMS_Supplement.pdf`). |
-| **`01-Project/`** | The full project — the prediction-market engine, terminal CLI, FastAPI + WebSocket web app with its React/Vite frontend, scripted + LLM agents, the offline eval harness, the test suite, and the recorded run/eval data. |
+| **`00-Slide/`** | Progress-update slide decks. |
+| **`01-Project/`** | The simulator — the prediction-market engine, terminal CLI, FastAPI + WebSocket server, the React/Vite frontend (`web/`), scripted + LLM agents (the model layer supports Gemini/Vertex and OpenAI-compatible endpoints like DeepSeek), scenario configs, the test suite, and recorded run data. |
 | **`02-Project-Demo/`** | A server-less build of the LLM showcase: the same frontend as `01-Project`, with its transport swapped from WebSocket → bundled recordings, so it deploys as a static site. This is what the live link above serves. |
 | **`03-Docs/`** | `PROJECT_GUIDE.md` (full project guide and code walkthrough) and `LLM_RATIONALITY_EVAL_REPORT.md` (the 8-probe rationality evaluation). |
+| **`04-eval/`** | The standalone `gms-eval` package — the offline LLM trading-rationality eval (8 probes + GO/NO-GO scorecard). Depends on the simulator's engine. |
 
 ---
 
@@ -38,9 +39,10 @@ One engine, three faces:
 3. a Python library (`market_sim`) you can script directly.
 
 **Agents.** Scripted bots (NoiseTrader, NaiveMM, ZIC, Fundamentalist) and **tool-using
-Gemini/Vertex LLM traders**, each with a private, heterogeneous, decaying probability
-signal. The **rationality eval** scores model behavior across 8 probes (P1–P8) with a
-GO / NO-GO scorecard — see `03-Docs/`.
+LLM traders** (Gemini/Vertex or OpenAI-compatible endpoints like DeepSeek), each with a
+private, heterogeneous, decaying probability signal. The separate **rationality eval**
+(`04-eval/`) scores model behavior across 8 probes (P1–P8) with a GO / NO-GO scorecard;
+the report is in `03-Docs/`.
 
 ---
 
@@ -58,16 +60,25 @@ make web        # build the UI and serve → http://127.0.0.1:8000  (press play)
 Terminal CLI (state persists between commands):
 
 ```bash
-./market init --config demo.yaml
+./market init --config scenarios/demo.yaml
 ./market run --rounds 200
 ./market status
 ./market replay --log runs/demo.jsonl     # verify byte-exact replay
 ```
 
-The LLM eval and LLM Showcase scenarios additionally need Vertex AI credentials: copy
-`01-Project/.env.example` to `01-Project/.env`, fill in your GCP project, and run
-`gcloud auth application-default login`. The engine, CLI, web dashboard, and tests run
-without a `.env`.
+LLM scenarios need model credentials — Vertex ADC for Gemini, or an API key for an
+OpenAI-compatible model (DeepSeek/OpenAI). Copy `01-Project/.env.example` to
+`01-Project/.env` and fill in what you use (`gcloud auth application-default login` for
+Vertex). The engine, CLI, web dashboard, and tests run without a `.env`.
+
+### Rationality eval (`04-eval/`)
+
+```bash
+cd 04-eval
+pip install -e ../01-Project[llm]   # the simulator (provides the engine)
+pip install -e .                    # the eval package
+python -m gms_eval.run_eval --probes P1 --repeats 1
+```
 
 ### Static demo (`02-Project-Demo/`)
 
@@ -96,5 +107,5 @@ npm run dev     # http://localhost:5173
 
 - The web apps include an **English / Chinese** language toggle (top-right; `?lang=zh`
   overrides).
-- `01-Project/runs/` and `01-Project/eval_runs/` hold the recorded simulation logs, session
-  snapshots, and eval results referenced by the docs.
+- `01-Project/runs/` holds the recorded simulation logs and session snapshots;
+  `04-eval/eval_runs/` holds the eval scorecards referenced by the report.
