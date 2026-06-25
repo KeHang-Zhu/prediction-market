@@ -45,18 +45,18 @@ The three hard guarantees at the engine level (all test-covered; the 2026-06-09 
 ## 2. Overall Architecture: One Engine, Three Faces
 
 ```
-market_sim/
+market_sim/    the library
   engine/      Pure engine — data models, order book, ledger (4 settlement types + invariants), matching exchange, market settlement
-  runner/      Config, event sourcing + canonical JSON, sink fan-out, round main loop, replay verification
+  runner/      Config, event sourcing + canonical JSON, sink fan-out, round main loop, scenario builder, replay verification
   commands/    Shared command layer (one dispatch serving both the CLI and the web console)
-  agents/      Agent protocol + scripted bots (noise / market-making / ZIC / fundamentalist) + tool-calling LLM traders
+  agents/      Agent protocol + scripted bots (noise / market-making / ZIC / fundamentalist) + the tool-calling LLM trader (ToolLoopAgent)
+  llm/         Model providers (Gemini/Vertex + OpenAI-compatible for DeepSeek etc.) behind a get_provider factory
   cli/         Typer terminal CLI
-  web/         FastAPI + WebSocket backend, sessions/replay, and a React/Vite frontend
-  eval/        Offline LLM rationality evaluation (8 probes + scorecard)
+  server/      FastAPI + WebSocket backend, sessions/replay, hosts the built UI from static/
+web/           React/Vite frontend (builds into market_sim/server/static/)
+scenarios/     Scenario YAMLs (demo, demo5, llm5_*) + archive/ + templates/
+experiments/   Research/example scripts (run_demo5_5rounds.py, quickstart.py)
 tests/         pytest + hypothesis property tests
-scripts/       Helper scripts (run_demo5_5rounds.py: runs demo5 offline and writes both JSONL + a resumable .session.pkl)
-demo.yaml      Manual demo experiment (scripted bots + 1 human seat)
-demo5.yaml     LLM Showcase experiment (5 tool-calling LLMs + private heterogeneous signals)
 ```
 
 The whole system stays clean thanks to **two decoupling seams**:
@@ -223,7 +223,7 @@ A grep check confirms: in `scripted.py`, bots use only `ctx.rng`, with no code t
 
 ### 5.3 LLM Agents: Single-Turn vs. Tool-Calling
 
-- **`LLMAgent` (single-turn)**: each round builds a complete observation JSON (excluding the true value) → has Gemini return a decision as forced JSON → parses it into actions. There is no conversation history; context is provided by a "summary of the last 5 rounds" window.
+- **Single-turn JSON decision (eval only)**: the model is shown a complete observation JSON (excluding the true value) → returns a forced-JSON decision → parsed into actions, with no conversation history. This path was removed from the live simulator; the forced-JSON client now lives in the `gms-eval` package and is used only by the rationality eval.
 - **`ToolLoopAgent` (tool-calling, the core innovation)**: maintains a **single persistent conversation** (`contents`) across the entire run. Each round:
   1. Sends a **minimal briefing** (`_wake_briefing`: its own cash/positions/open orders + open and resolved market ids; if there is a new private signal or news this round, it only hints "there is one, go read it" and **explicitly contains no prices, depths, or signal values** — these must be fetched with the read tools);
   2. Enters a tool loop (at most `max_tool_calls=8` model-call turns per round): the model actively calls **10 tools** — 6 read-only (`get_markets / get_orderbook / get_trade_history / get_portfolio / get_news / get_news_detail`, going through the frozen snapshot, free, returning synchronously), 1 **`commit_view(beliefs, plan)`** (submit per-market YES probabilities and a one-line plan before trading, emitting an `agent_view` event; **any order placed before committing is rejected outright**), 2 writes (`place_order / cancel_order`, queued for round-end execution, emitting an `order_queued` event the instant they are called), and 1 `finish(lessons)` to wrap up (records only a one-line "what I learned/corrected this round" — beliefs and plan were already given in commit_view). The flow is enforced as the four stages **read → commit_view → trade → finish**;
@@ -424,7 +424,7 @@ make web              # -> http://127.0.0.1:8000   (click play)
 A 5-minute terminal CLI script:
 
 ```bash
-./market init --config demo.yaml          # 3 coin markets + 3 noise + 1 MM + 1 fundamentalist + 1 human seat
+./market init --config scenarios/demo.yaml   # 3 coin markets + 3 noise + 1 MM + 1 fundamentalist + 1 human seat
 ./market run --rounds 200                  # advance 200 rounds, watch convergence
 ./market status                            # COIN-A mid stable near ~65¢ (its true_prob)
 ./market order place --agent me --market COIN-A --token YES --side buy --price 75 --qty 12
@@ -432,9 +432,9 @@ A 5-minute terminal CLI script:
 ./market replay --log runs/demo.jsonl      # byte-exact replay verification
 ```
 
-> The LLM Showcase needs the `[eval]` dependencies + Vertex ADC (`gcloud auth application-default login`); the model comes from `GEMINI_MODEL` in `.env`.
+> The LLM Showcase needs the `[llm]` dependencies + Vertex ADC (`gcloud auth application-default login`); the model comes from `GEMINI_MODEL` in `.env`.
 > Because of the 5 live LLMs, it is **recommended to run offline (CLI) and then replay in the browser**, rather than live single-stepping.
-> The repo provides `scripts/run_demo5_5rounds.py`: it runs demo5 offline for some number of rounds and simultaneously writes out a JSONL recording and a resumable `.session.pkl` (equivalent to the web Save button's artifacts); once it finishes, you can replay or resume from the breakpoint in the browser's History.
+> The repo provides `experiments/run_demo5_5rounds.py`: it runs demo5 offline for some number of rounds and simultaneously writes out a JSONL recording and a resumable `.session.pkl` (equivalent to the web Save button's artifacts); once it finishes, you can replay or resume from the breakpoint in the browser's History.
 
 ---
 

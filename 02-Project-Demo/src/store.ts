@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { AgentMeta, ClearingTrace, EventDict, ModelTurn, NewsItem, Playback, Snapshot, Trade } from './types'
 import { AGENT_META } from './agentMeta'
 import REPLAY_FULL from './replay.json'
+import REPLAY_FULL5 from './replay-5r.json'
 import REPLAY_LONG from './replay-6r.json'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10,8 +11,10 @@ import REPLAY_LONG from './replay-6r.json'
 // by a local, server-less replay engine — so the showcase works as a static site
 // (Vercel) with no backend. The event-folding logic (applyEvents) and selectors are
 // unchanged from the live app, so the UI is byte-for-byte the real showcase; only the
-// transport is local. Two recorded runs are bundled (both `llm5_only` — five LLM
+// transport is local. Three recorded runs are bundled (all `llm5_only` — five LLM
 // traders, no market-maker/noise) and switchable via the transport bar:
+//   • "full5" — DEFAULT: 5 rounds WITH the verbatim model dialogue + matching trace
+//               (a longer run that still carries every demo feature).
 //   • "full"  — 2 rounds WITH the verbatim model dialogue + matching trace (every demo
 //               feature works: agent walkthrough, clearing trace).
 //   • "long"  — 6 rounds for watching price convergence (no per-turn dialogue capture).
@@ -97,7 +100,10 @@ const maxRoundOf = (evs: EventDict[]) => evs.reduce((m, e) => Math.max(m, e.roun
 const hasType = (evs: EventDict[], t: string) => evs.some((e) => e.type === t)
 
 const REPLAYS: { meta: ReplayMeta; events: EventDict[] }[] = [
-  // full = the 2-round run WITH verbatim dialogue (model_turn) + clearing trace
+  // full5 = the DEFAULT: a 5-round run WITH verbatim dialogue (model_turn) + clearing trace
+  { events: REPLAY_FULL5 as unknown as EventDict[],
+    meta: { key: 'full5', rounds: maxRoundOf(REPLAY_FULL5 as unknown as EventDict[]), dialogue: hasType(REPLAY_FULL5 as unknown as EventDict[], 'model_turn') } },
+  // full = the shorter 2-round run, also WITH verbatim dialogue + clearing trace
   { events: REPLAY_FULL as unknown as EventDict[],
     meta: { key: 'full', rounds: maxRoundOf(REPLAY_FULL as unknown as EventDict[]), dialogue: hasType(REPLAY_FULL as unknown as EventDict[], 'model_turn') } },
   // long = the 6-round run for convergence (no per-turn dialogue)
@@ -106,7 +112,7 @@ const REPLAYS: { meta: ReplayMeta; events: EventDict[] }[] = [
 ]
 export const REPLAY_METAS: ReplayMeta[] = REPLAYS.map((r) => r.meta)
 
-const DEFAULT_SPEED = 8
+const DEFAULT_SPEED = 3
 
 let active = 0
 let EVENTS = REPLAYS[active].events

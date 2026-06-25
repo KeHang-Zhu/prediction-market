@@ -1,7 +1,7 @@
 # LLM Trading-Behavior Rationality Evaluation Report
 
 > Evaluation target: in a binary prediction market, can an LLM acting as a trader make **rational trading decisions**?
-> Code location: `market_sim/eval/`
+> Code location: `04-eval/gms_eval/` (the standalone `gms-eval` package)
 > Report date: 2026-06-09
 > Latest result: `gemini-3.5-flash` **passes 8/8 (GO)** across the 8 L2 probes.
 
@@ -256,7 +256,7 @@ P3 (empty-book market-making) and P4 (cross-contract arbitrage) are the two rela
 ## 8. Limitations and Next Steps
 
 1. **Small sample size**: under `repeats=5`, even at 8/8 the 95% confidence-interval lower bound per probe is only 56.6%. To claim "stable perfection" firmly requires `repeats=10~20` (a few dozen more model calls).
-2. **This is the score for the "open-book" path**: the current evaluation only covers the one-shot JSON-decision `LLMAgent`—prices and news are fed to the model in advance. It **cannot test the tool-calling path** (`ToolLoopAgent`, configured as `type: llm_agentic`), in which the model must itself use the command-line-style API (`get_markets` / `get_orderbook` / `get_news` …) to gather information and then `commit_view → place_order → finish`. **This "closed-book" path currently has zero results**, and it is harder and will expose new failure modes (placing orders without reading private signals, not completing the flow, etc.).
+2. **This is the score for the "open-book" path**: the current evaluation only covers the one-shot **JSON-decision path** (the model is shown the situation and returns a forced-JSON decision; this path lives in `gms-eval` and is no longer a live simulator agent)—prices and news are fed to the model in advance. It **cannot test the tool-calling path** (`ToolLoopAgent`, configured as `type: llm_agentic`), in which the model must itself use the command-line-style API (`get_markets` / `get_orderbook` / `get_news` …) to gather information and then `commit_view → place_order → finish`. **This "closed-book" path currently has zero results**, and it is harder and will expose new failure modes (placing orders without reading private signals, not completing the flow, etc.).
 3. **L3 not evaluated**: the P&L standard of beating the ZIC baseline in live multi-agent competition is not yet included.
 
 **Recommended next steps**: ① raise `repeats` to tighten the confidence intervals and confirm the stability of the perfect score; ② add an equivalent evaluation for the tool-calling path (reuse these 8 scenarios and judges, swapping "feeding information in advance" for "letting the model query with tools itself").
@@ -267,12 +267,12 @@ P3 (empty-book market-making) and P4 (cross-contract arbitrage) are the two rela
 
 ```bash
 # Full set of 8 probes, gemini-3.5-flash, 5 repeats per probe
-./.venv/bin/python -m market_sim.eval.run_eval \
+python -m gms_eval.run_eval \
     --model gemini-3.5-flash --repeats 5 \
     --outdir eval_runs/gemini-3.5-flash
 
 # Run only specified probes, bypassing the cache for single-probe verification
-./.venv/bin/python -m market_sim.eval.run_eval \
+python -m gms_eval.run_eval \
     --model gemini-3.5-flash --probes P3,P4 --repeats 1 --no-cache
 ```
 

@@ -2,7 +2,7 @@
 
 Generative Market Simulation is a binary prediction-market engine with a terminal CLI, a
 browser visualizer, and an LLM-agent layer. The Python engine is the single source of
-truth; every other surface (CLI, web, eval) is a thin shell over it.
+truth; every other surface (CLI, web) is a thin shell over it.
 
 ## Layers (`market_sim/`)
 
@@ -16,12 +16,11 @@ runner/      The round loop and the determinism contract. config (pydantic + YAM
              callback / fanout), simulation (the round loop), builder (high-level
              spec -> Config), replay (byte-exact verification).
 agents/      Agent protocol + actions (base), scripted bots (NoiseTrader, NaiveMM,
-             ZIC, Fundamentalist), and the LLM traders (llm_agent: LLMAgent and the
-             persistent tool-using ToolLoopAgent).
-eval/        Offline LLM behavioural-rationality eval (probes, judge, scorecard) and
-             the model providers (providers/: a neutral LLMProvider interface, the
-             Gemini/Vertex provider, and an OpenAI-compatible provider for DeepSeek
-             and similar endpoints, behind a get_provider factory).
+             ZIC, Fundamentalist), and the persistent tool-using LLM trader
+             (llm_agent: ToolLoopAgent).
+llm/         Model providers for the LLM agents: a neutral LLMProvider interface, the
+             Gemini/Vertex provider, and an OpenAI-compatible provider for DeepSeek and
+             similar endpoints, behind a get_provider factory.
 commands/    One command layer shared by the CLI and the web console (handlers +
              dispatch), the live Session, and the agent-facing action API.
 cli/         The terminal CLI (typer).
